@@ -41,7 +41,7 @@ export interface TestReadResult {
 
 // Environment variables (ensure these are set in your .env.local or environment)
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Sheet1'; // Default sheet tab name
+const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Arkusz1'; // Default sheet tab name, matching user's error
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const RAW_GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 let GOOGLE_PRIVATE_KEY: string | undefined;
@@ -136,23 +136,25 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
 
         let existingHeaders: string[] = [];
         let sheetExistsAndHasHeaders = false;
+        let performOverwrite = false;
+
         console.log(`[ExportToSheets] Attempting to get existing headers from sheet: ${SHEET_NAME}, range: A1:Z1`);
         try {
             const headerResponse = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID,
-                range: `${SHEET_NAME}!A1:Z1`, 
+                range: `${SHEET_NAME}!A1:ZZ1`, // Read a wider range for headers
             });
             existingHeaders = headerResponse.data.values?.[0] as string[] || [];
             if (existingHeaders.length > 0) {
                 sheetExistsAndHasHeaders = true;
                 console.log("[ExportToSheets] Existing headers fetched:", existingHeaders);
             } else {
-                 console.log("[ExportToSheets] No headers found in A1:Z1 (sheet might be empty or headers are not in the first row).");
+                 console.log("[ExportToSheets] No headers found in A1:ZZ1 (sheet might be empty or headers are not in the first row).");
             }
         } catch (getHeaderError: any) {
              console.error("[ExportToSheets] Error fetching existing headers:", getHeaderError.code, getHeaderError.message, getHeaderError.response?.data?.error);
              if (getHeaderError.code === 400 && getHeaderError.message?.includes('Unable to parse range')) {
-                 console.warn(`[ExportToSheets] Sheet "${SHEET_NAME}" in spreadsheet ${SPREADSHEET_ID} might be empty or range A1:Z1 doesn't exist. Will attempt to write headers.`);
+                 console.warn(`[ExportToSheets] Sheet "${SHEET_NAME}" in spreadsheet ${SPREADSHEET_ID} might be empty or range A1:ZZ1 doesn't exist. Will attempt to write headers.`);
              } else if (getHeaderError.code === 403 || getHeaderError.response?.data?.error?.status === 'PERMISSION_DENIED') {
                  const errMsg = `Permission denied reading headers from sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID}). Ensure the service account ${GOOGLE_SERVICE_ACCOUNT_EMAIL} has view/edit access.`;
                  console.error("[ExportToSheets]", errMsg);
@@ -168,13 +170,36 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
              }
         }
         
+        if (sheetExistsAndHasHeaders) {
+            const headersMatch = JSON.stringify(existingHeaders.slice(0, headers.length)) === JSON.stringify(headers);
+            if (!headersMatch) {
+                const warningMsg = `Header mismatch in Google Sheet "${SHEET_NAME}". App Expected: [${headers.join(', ')}], Sheet Found: [${existingHeaders.join(', ')}]. The sheet will be cleared and rewritten with the new format.`;
+                console.warn('[ExportToSheets]', warningMsg);
+                performOverwrite = true;
+            }
+        }
+
         const rowsToUpdate: { range: string; values: (string | number | null)[][] }[] = [];
         const rowsToAppend: (string | number | null)[][] = [];
         let rowsUpdatedCount = 0;
         let rowsAppendedCount = 0;
 
-        if (!sheetExistsAndHasHeaders) {
-            console.log(`[ExportToSheets] Sheet "${SHEET_NAME}" is determined to be empty or without recognizable headers. Writing new headers and appending all data.`);
+        if (performOverwrite) {
+            try {
+                await sheets.spreadsheets.values.clear({
+                    spreadsheetId: SPREADSHEET_ID!,
+                    range: `${SHEET_NAME}`, // Clear entire sheet
+                });
+                console.log(`[ExportToSheets] Sheet "${SHEET_NAME}" cleared due to header mismatch.`);
+                sheetExistsAndHasHeaders = false; // Treat as if sheet was new for header writing
+            } catch (clearError: any) {
+                console.error(`[ExportToSheets] Error clearing sheet "${SHEET_NAME}" for overwrite:`, clearError.message);
+                return { success: false, error: `Failed to clear sheet for format update: ${clearError.message}` };
+            }
+        }
+        
+        if (!sheetExistsAndHasHeaders) { // True if initially empty, or if performOverwrite cleared it
+            console.log(`[ExportToSheets] Writing/Overwriting headers for sheet: "${SHEET_NAME}".`);
             if (headers.length > 0) {
                 try {
                     await sheets.spreadsheets.values.update({
@@ -185,31 +210,24 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                             values: [headers],
                         },
                     });
-                    console.log("[ExportToSheets] Headers written successfully to empty sheet.");
-                    sheetExistsAndHasHeaders = true; // Headers are now present
+                    console.log("[ExportToSheets] Headers written successfully.");
+                    sheetExistsAndHasHeaders = true; // Headers are now present and correct
                 } catch(writeHeaderError: any) {
-                     console.error(`[ExportToSheets] Error writing headers to empty sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID}). Error: ${writeHeaderError.message}`, writeHeaderError.response?.data?.error);
+                     console.error(`[ExportToSheets] Error writing headers to sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID}). Error: ${writeHeaderError.message}`, writeHeaderError.response?.data?.error);
                       if (writeHeaderError.code === 403 || writeHeaderError.response?.data?.error?.status === 'PERMISSION_DENIED') {
                           return { success: false, error: `Permission denied writing headers to Google Sheet. Ensure the service account has Editor access.` };
                       }
                       return { success: false, error: `Failed to write headers: ${writeHeaderError.message || 'Unknown error during header write'}` };
                 }
             }
-            // All data is new if headers were just written or sheet was totally empty
+            // All data is new if headers were just written or sheet was cleared & headers written
             rowsToAppend.push(...data);
-        } else {
-            // Headers exist, validate them
-            const headersMatch = JSON.stringify(existingHeaders) === JSON.stringify(headers);
-            if (!headersMatch) {
-                const errorMsg = `Header mismatch in Google Sheet "${SHEET_NAME}". App Expected: [${headers.join(', ')}], Sheet Found: [${existingHeaders.join(', ')}]. Please update the sheet headers or app configuration.`;
-                console.error('[ExportToSheets] Header mismatch:', { expected: headers, found: existingHeaders });
-                return { success: false, error: errorMsg };
-            }
+            rowsUpdatedCount = 0; // No updates in this path
+        } else { // Headers existed and matched (performOverwrite was false)
             console.log("[ExportToSheets] Headers match. Proceeding to check existing data rows for updates/appends.");
 
-            const dateColumn = 'A'; // Assuming dates are in column A
+            const dateColumn = 'A'; 
             const existingDatesMap: Map<string, number> = new Map();
-            // Read from A2 downwards to skip the header row when populating the map
             const dateValuesRange = `${SHEET_NAME}!${dateColumn}2:${dateColumn}`;
 
             try {
@@ -221,8 +239,8 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
 
                 if (dateValuesResponse.data.values) {
                     dateValuesResponse.data.values.forEach((row, index) => {
-                        if (row[0] && String(row[0]).trim() !== "") { // Ensure there's a non-empty date in the cell
-                            existingDatesMap.set(String(row[0]), index + 2); // +2 because sheet rows are 1-indexed and we start from A2
+                        if (row[0] && String(row[0]).trim() !== "") { 
+                            existingDatesMap.set(String(row[0]), index + 2); 
                         }
                     });
                 }
@@ -241,14 +259,14 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
             }
 
             data.forEach(rowData => {
-                const dateValue = String(rowData[0]); // Assuming date is the first element
+                const dateValue = String(rowData[0]); 
                 if (existingDatesMap.has(dateValue)) {
                     const rowIndex = existingDatesMap.get(dateValue)!;
                     const endColumnLetter = String.fromCharCode('A'.charCodeAt(0) + headers.length - 1);
                     const range = `${SHEET_NAME}!${dateColumn}${rowIndex}:${endColumnLetter}${rowIndex}`;
                     rowsToUpdate.push({
                         range: range,
-                        values: [rowData] // API expects array of rows
+                        values: [rowData] 
                     });
                 } else {
                     rowsToAppend.push(rowData);
@@ -265,7 +283,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                     spreadsheetId: SPREADSHEET_ID!,
                     requestBody: {
                         valueInputOption: 'USER_ENTERED',
-                        data: rowsToUpdate, // This is an array of ValueRange objects
+                        data: rowsToUpdate, 
                     },
                 };
                 const batchUpdateResponse = await sheets.spreadsheets.values.batchUpdate(batchUpdateRequest);
@@ -282,7 +300,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
              try {
                 const appendResponse = await sheets.spreadsheets.values.append({
                     spreadsheetId: SPREADSHEET_ID!,
-                    range: `${SHEET_NAME}!A:A`, // Append to the table, finding the first empty row.
+                    range: `${SHEET_NAME}!A:A`, 
                     valueInputOption: 'USER_ENTERED', 
                     insertDataOption: 'INSERT_ROWS', 
                     requestBody: {
@@ -313,6 +331,10 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         } else if (data.length === 0) {
             summaryMessage = "Brak danych do wysłania.";
         }
+        if (performOverwrite && data.length > 0) {
+            summaryMessage = `Arkusz '${SHEET_NAME}' został zaktualizowany do nowego formatu. ${summaryMessage}`;
+        }
+
 
         console.log(`[ExportToSheets] Export finished. ${summaryMessage}`);
         return { success: true, rowsAppended: rowsAppendedCount, rowsUpdated: rowsUpdatedCount, message: summaryMessage };
@@ -415,3 +437,6 @@ export async function testReadGoogleSheet(testRange: string = `${SHEET_NAME}!A1:
         return { success: false, error: userFriendlyError, details: error.response?.data?.error || error.message };
     }
 }
+
+
+    
