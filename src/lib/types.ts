@@ -42,3 +42,26 @@ export interface DailyEntry {
 export interface StoredData {
   [date: string]: DailyEntry;
 }
+
+// Type for Google Sheet statistical analysis results
+export type ThemeKey = keyof ThemeScores;
+
+export interface SheetAnalysisResult {
+  success: boolean;
+  error?: string;
+  message?: string; // General message
+  averageScores?: Partial<Record<ThemeKey, number>>;
+  maxScoreDay?: { date: string; score: number };
+  trends?: Partial<Record<ThemeKey, 'Rosnący' | 'Spadkowy' | 'Stabilny' | 'Za mało danych'>>;
+  processedEntriesCount?: number;
+  period?: string; // e.g., "Ostatnie 30 dni"
+  startDate?: string;
+  endDate?: string;
+}
+
+// Interface for parsed sheet row data for analysis
+export interface ParsedSheetEntry {
+    date: string;
+    totalScore: number;
+    themeScores: Partial<Record<ThemeKey, number>>;
+}

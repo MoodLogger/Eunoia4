@@ -3,40 +3,23 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle } from 'lucide-react';
-import { analyzeMoodPatterns } from '@/ai/flows/analyze-mood-patterns';
+import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, TrendingUp, TrendingDown, CalendarDays, Trophy } from 'lucide-react';
+// Removed: import { analyzeMoodPatterns } from '@/ai/flows/analyze-mood-patterns';
+import { analyzeSheetData } from '@/actions/analyze-sheet-data'; // New import
 import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets';
-import type { DailyEntry, StoredData, ThemeScores, QuestionScore } from '@/lib/types';
-import { getAllEntries } from '@/lib/storage';
+import type { DailyEntry, StoredData, ThemeScores, QuestionScore, SheetAnalysisResult, ThemeKey } from '@/lib/types'; // Added SheetAnalysisResult
+// Removed: import { getAllEntries } from '@/lib/storage'; - No longer fetching all entries for AI
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
-import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; // Import helpers
+import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; 
 
 interface MoodAnalysisProps {
   currentEntry: DailyEntry | null;
 }
 
-function prepareDataForAnalysis(allEntries: StoredData): { moodData: string; themeScores: string } {
-    const entriesArray = Object.values(allEntries).sort((a, b) => a.date.localeCompare(b.date));
-    const moodData = entriesArray.map(entry => ({
-        date: entry.date,
-        mood: entry.mood || 'not specified'
-    }));
-    const themeScores = entriesArray.map(entry => {
-        const scores = entry.scores || {};
-        const entryScores: Record<string, number | string> = { date: entry.date };
-        themeOrder.forEach(themeKey => {
-            entryScores[themeKey] = scores[themeKey] ?? 0;
-        });
-        return entryScores;
-    });
-    return {
-        moodData: JSON.stringify(moodData),
-        themeScores: JSON.stringify(themeScores)
-    };
-}
+// Removed prepareDataForAnalysis function for Genkit AI flow
 
 const generateSheetHeaders = (): string[] => {
     const headers: string[] = ['Date', 'Suma Punktów'];
@@ -44,8 +27,7 @@ const generateSheetHeaders = (): string[] => {
         headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            // Use questionText directly in headers, ensure Polish characters are preserved
-            const sanitizedQuestionText = questionText.substring(0, 100); // Only limit length
+            const sanitizedQuestionText = questionText.substring(0, 100);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
         });
@@ -67,8 +49,8 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
     rowData.push(parseFloat(totalSum.toFixed(2)));
 
     themeOrder.forEach(themeKey => {
-        rowData.push(entry.scores?.[themeKey] ?? 0); // Overall theme score
-        const questionsCount = getQuestionsForTheme(themeKey).length; // Usually 8
+        rowData.push(entry.scores?.[themeKey] ?? 0); 
+        const questionsCount = getQuestionsForTheme(themeKey).length; 
         for (let qIndex = 0; qIndex < questionsCount; qIndex++) {
             const questionScoreValue = entry.detailedScores[themeKey]?.[qIndex];
             const questionScore: QuestionScore | undefined = 
@@ -76,8 +58,8 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
                 ? questionScoreValue 
                 : undefined;
             
-            rowData.push(questionScore ?? 0); // Numerical score (default to 0 if undefined)
-            rowData.push(getAnswerLabelForScore(themeKey, qIndex, questionScore)); // Textual answer
+            rowData.push(questionScore ?? 0); 
+            rowData.push(getAnswerLabelForScore(themeKey, qIndex, questionScore)); 
         }
     });
     return [rowData];
@@ -87,7 +69,7 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
 export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   const [isAnalyzing, setIsAnalyzing] = React.useState(false);
   const [isExporting, setIsExporting] = React.useState(false);
-  const [analysisResult, setAnalysisResult] = React.useState<string | null>(null);
+  const [analysisResult, setAnalysisResult] = React.useState<SheetAnalysisResult | null>(null); // Changed type
   const [exportMessage, setExportMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
@@ -99,10 +81,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setIsClient(true);
   }, []);
 
-  const fetchDataForAllEntries = async () => { 
-    if (!isClient) return {};
-    return await getAllEntries();
-  };
+  // Removed fetchDataForAllEntries as it's not used by the new analysis logic
 
   const handleAnalyzeMoods = async () => {
     if (!isClient) return;
@@ -113,19 +92,31 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setExportMessage(null);
 
     try {
-      const allEntries = await fetchDataForAllEntries(); 
-      const entriesCount = Object.keys(allEntries).length;
+      // const allEntries = await fetchDataForAllEntries(); // No longer needed for AI
+      // const entriesCount = Object.keys(allEntries).length; // No longer needed for AI
 
-      if (entriesCount < 3) {
-          setError("Za mało danych do analizy. Proszę logować swoje oceny przez co najmniej 3 dni.");
-          setIsAnalyzing(false);
-          return;
+      // if (entriesCount < 3) { // This check might be irrelevant or need to be based on Sheet data count
+      //     setError("Za mało danych do analizy. Proszę logować swoje oceny przez co najmniej 3 dni.");
+      //     setIsAnalyzing(false);
+      //     return;
+      // }
+      // const { moodData, themeScores } = prepareDataForAnalysis(allEntries); // No longer needed for AI
+      // const result = await analyzeMoodPatterns({ moodData, themeScores }); // Old AI call
+      
+      toast({ title: "Rozpoczynam analizę danych z Arkusza Google...", description: "To może chwilę potrwać." });
+      const result = await analyzeSheetData(); // New call to sheet analysis
+      
+      if (result.success) {
+        setAnalysisResult(result);
+        if(result.message) {
+            toast({ title: "Analiza zakończona", description: result.message });
+        }
+      } else {
+        throw new Error(result.error || "Analiza danych z arkusza nie powiodła się.");
       }
-      const { moodData, themeScores } = prepareDataForAnalysis(allEntries);
-      const result = await analyzeMoodPatterns({ moodData, themeScores });
-      setAnalysisResult(result.insights);
+
     } catch (err) {
-      console.error("Error analyzing mood patterns:", err);
+      console.error("Error analyzing sheet data:", err);
       const errorMessage = err instanceof Error ? err.message : "Analiza nie powiodła się.";
       setError(errorMessage);
       toast({ variant: "destructive", title: "Analiza nie powiodła się", description: errorMessage });
@@ -139,7 +130,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       
       setIsExporting(true);
       setError(null);
-      setAnalysisResult(null);
+      // setAnalysisResult(null); // Keep analysis result visible during export
       setExportMessage(null);
 
       if (!currentEntry) {
@@ -182,7 +173,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     if (!isClient) return;
     setIsTestingSheetRead(true);
     setError(null);
-    setAnalysisResult(null);
+    // setAnalysisResult(null);
     setExportMessage(null);
     toast({ title: "Testowanie odczytu", description: "Próba odczytu z Google Sheet..." });
     try {
@@ -209,7 +200,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     return (
         <Card className="w-full max-w-md mx-auto mt-6 shadow-lg">
             <CardHeader>
-                <CardTitle className="text-center flex items-center justify-center"><Lightbulb className="mr-2 h-5 w-5 text-accent" /> Analiza i export</CardTitle>
+                <CardTitle className="text-center flex items-center justify-center"><BarChart3 className="mr-2 h-5 w-5 text-accent" /> Analiza i export</CardTitle>
             </CardHeader>
             <CardContent className="flex flex-col items-center space-y-4 p-6">
                  <div className="animate-pulse h-10 bg-muted rounded w-3/4"></div>
@@ -223,12 +214,12 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   return (
     <Card className="w-full max-w-md mx-auto mt-6 shadow-lg">
       <CardHeader>
-        <CardTitle className="text-center flex items-center justify-center"><Lightbulb className="mr-2 h-5 w-5 text-accent" /> Analiza i export</CardTitle>
+        <CardTitle className="text-center flex items-center justify-center"><BarChart3 className="mr-2 h-5 w-5 text-accent" /> Analiza i export</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4 p-6">
         <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-4">
             <Button onClick={handleAnalyzeMoods} disabled={isAnalyzing || isExporting || isTestingSheetRead}>
-              {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Lightbulb className="mr-2 h-4 w-4" /> Analizuj</>}
+              {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><BarChart3 className="mr-2 h-4 w-4" /> Analizuj</>}
             </Button>
              <Button onClick={handleExportData} disabled={isAnalyzing || isExporting || isTestingSheetRead || !currentEntry} variant="outline">
               {isExporting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Exportuję...</> : <><UploadCloud className="mr-2 h-4 w-4" /> Export do Arkuszy</>}
@@ -239,6 +230,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
                 {isTestingSheetRead ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Testuję...</> : "Testuj Odczyt Arkusza"}
             </Button>
         </div>
+
         {error && !isAnalyzing && !isExporting && !isTestingSheetRead && (
             <Alert variant="destructive" className="mt-4">
                  <AlertCircle className="h-4 w-4" />
@@ -246,15 +238,58 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
                 <AlertDescription>{error}</AlertDescription>
             </Alert>
         )}
-        {analysisResult && !error && !isAnalyzing && (
-          <Alert variant="default" className="mt-4 bg-accent/10 border-accent">
+
+        {analysisResult && analysisResult.success && !isAnalyzing && (
+          <Alert variant="default" className="mt-4 bg-accent/10 border-accent text-sm">
             <Lightbulb className="h-4 w-4 text-accent" />
-            <AlertTitle className="text-accent-foreground">Wnioski z analizy</AlertTitle>
-            <AlertDescription className="text-accent-foreground/90 whitespace-pre-wrap">
-              {analysisResult}
+            <AlertTitle className="text-accent-foreground font-semibold mb-2">Statystyki z Arkusza Google</AlertTitle>
+            <AlertDescription className="text-accent-foreground/90 space-y-2">
+              {analysisResult.period && <p className="flex items-center"><CalendarDays className="mr-2 h-4 w-4" /> {analysisResult.period}</p>}
+              
+              {analysisResult.averageScores && Object.keys(analysisResult.averageScores).length > 0 && (
+                <div>
+                  <h4 className="font-medium mt-2 mb-1">Średnie wyniki pryzmatów:</h4>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {themeOrder.map(themeKey => (
+                       analysisResult.averageScores![themeKey] !== undefined && (
+                        <li key={themeKey}>
+                          {themeLabels[themeKey]}: <span className="font-semibold">{analysisResult.averageScores![themeKey]?.toFixed(2)}</span>
+                        </li>
+                       )
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              {analysisResult.maxScoreDay && (
+                <p className="flex items-center mt-2"><Trophy className="mr-2 h-4 w-4 text-yellow-500" /> Najlepszy dzień: {analysisResult.maxScoreDay.date} (Suma: <span className="font-semibold">{analysisResult.maxScoreDay.score}</span>)</p>
+              )}
+
+              {analysisResult.trends && Object.keys(analysisResult.trends).length > 0 && (
+                <div>
+                  <h4 className="font-medium mt-3 mb-1">Trendy pryzmatów:</h4>
+                  <ul className="list-disc pl-5 space-y-1">
+                    {themeOrder.map(themeKey => {
+                       const trend = analysisResult.trends![themeKey];
+                       if (trend) {
+                         return (
+                            <li key={themeKey} className="flex items-center">
+                              {themeLabels[themeKey]}: <span className="font-semibold ml-1 mr-1">{trend}</span>
+                              {trend === 'Rosnący' && <TrendingUp className="h-4 w-4 text-green-500" />}
+                              {trend === 'Spadkowy' && <TrendingDown className="h-4 w-4 text-red-500" />}
+                            </li>
+                         );
+                       }
+                       return null;
+                    })}
+                  </ul>
+                </div>
+              )}
+              {analysisResult.processedEntriesCount === 0 && <p>Brak danych w arkuszu dla wybranego okresu.</p>}
             </AlertDescription>
           </Alert>
         )}
+
         {exportMessage && !error && !isExporting && (
             <Alert variant="default" className="mt-4 bg-primary/10 border-primary">
                 <CheckCircle className="h-4 w-4 text-primary"/>
@@ -268,4 +303,3 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
-
