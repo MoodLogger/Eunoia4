@@ -44,8 +44,8 @@ const generateSheetHeaders = (): string[] => {
         headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            // Use questionText directly in headers
-            const sanitizedQuestionText = questionText.replace(/[^\w\s-]/gi, '').substring(0, 100); // Basic sanitization and length limit
+            // Use questionText directly in headers, ensure Polish characters are preserved
+            const sanitizedQuestionText = questionText.substring(0, 100); // Only limit length
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
         });
