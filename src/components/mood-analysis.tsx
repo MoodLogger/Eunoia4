@@ -43,9 +43,11 @@ const generateSheetHeaders = (): string[] => {
     themeOrder.forEach(themeKey => {
         headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
         const questions = getQuestionsForTheme(themeKey);
-        questions.forEach((_, qIndex) => {
-            headers.push(`${themeLabels[themeKey]} - P${qIndex + 1} - Wynik`);
-            headers.push(`${themeLabels[themeKey]} - P${qIndex + 1} - Odpowiedź`);
+        questions.forEach((questionText, qIndex) => {
+            // Use questionText directly in headers
+            const sanitizedQuestionText = questionText.replace(/[^\w\s-]/gi, '').substring(0, 100); // Basic sanitization and length limit
+            headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
+            headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
         });
     });
     return headers;
@@ -266,3 +268,4 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
+
