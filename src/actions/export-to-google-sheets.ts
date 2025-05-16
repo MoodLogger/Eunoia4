@@ -13,6 +13,7 @@
 
 import { google } from 'googleapis';
 import { z } from 'zod';
+import { format, isValid, parseISO } from 'date-fns'; // Added parseISO for robust date parsing
 
 // Define input schema for the server action
 const ExportInputSchema = z.object({
@@ -41,7 +42,7 @@ export interface TestReadResult {
 
 // Environment variables (ensure these are set in your .env.local or environment)
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
-const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Arkusz1'; // Default sheet tab name, matching user's error
+const SHEET_NAME = process.env.GOOGLE_SHEET_NAME || 'Arkusz1'; // Default sheet tab name
 const GOOGLE_SERVICE_ACCOUNT_EMAIL = process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL;
 const RAW_GOOGLE_PRIVATE_KEY = process.env.GOOGLE_PRIVATE_KEY;
 let GOOGLE_PRIVATE_KEY: string | undefined;
@@ -64,13 +65,13 @@ if (RAW_GOOGLE_PRIVATE_KEY) {
 }
 
 function isPrivateKeyFormatValid(key: string | undefined): boolean {
-    const isValid = !!key && key.startsWith('-----BEGIN PRIVATE KEY-----') && key.endsWith('-----END PRIVATE KEY-----\n');
-    console.log("[ExportToSheets] isPrivateKeyFormatValid check:", isValid, "Key provided:", !!key);
-    if (key && !isValid) {
+    const isValidKey = !!key && key.startsWith('-----BEGIN PRIVATE KEY-----') && key.endsWith('-----END PRIVATE KEY-----\n');
+    console.log("[ExportToSheets] isPrivateKeyFormatValid check:", isValidKey, "Key provided:", !!key);
+    if (key && !isValidKey) {
         console.log("[ExportToSheets] Key starts with '-----BEGIN PRIVATE KEY-----':", key.startsWith('-----BEGIN PRIVATE KEY-----'));
         console.log("[ExportToSheets] Key ends with '-----END PRIVATE KEY-----\\n':", key.endsWith('-----END PRIVATE KEY-----\n'));
     }
-    return isValid;
+    return isValidKey;
 }
 
 export async function exportToGoogleSheets(input: ExportInput): Promise<ExportResult> {
@@ -104,6 +105,8 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
      console.log("[ExportToSheets] Input data validated successfully.");
 
      const { headers, data } = validationResult.data;
+     console.log("[ExportToSheets] App's expected headers:", JSON.stringify(headers));
+
 
      let auth;
      try {
@@ -121,7 +124,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         console.error('[ExportToSheets] Error initializing Google Auth:', authError);
          let detailedError = "Failed to authenticate with Google. Check service account credentials.";
          if (authError.message?.includes('PEM_read_bio_PrivateKey') || authError.message?.includes('DECODER routines') || authError.message?.includes('bad base64 decode')) {
-            detailedError = "Authentication failed. Potential issue with GOOGLE_PRIVATE_KEY format or value in .env.local. Please verify it matches the downloaded JSON key exactly, including the BEGIN/END lines and using '\\n' for newlines."
+            detailedError = "Authentication failed. Potential issue with GOOGLE_PRIVATE_KEY format or value in .env.local. Please verify it matches the downloaded JSON key file exactly, including the BEGIN/END lines and using '\\n' for newlines."
          } else if (authError.message) {
              detailedError += ` Specific error: ${authError.message}`;
          }
@@ -138,29 +141,29 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         let sheetExistsAndHasHeaders = false;
         let performOverwrite = false;
 
-        console.log(`[ExportToSheets] Attempting to get existing headers from sheet: ${SHEET_NAME}, range: A1:Z1`);
+        console.log(`[ExportToSheets] Attempting to get existing headers from sheet: ${SHEET_NAME}, range: A1:ZZ1`);
         try {
             const headerResponse = await sheets.spreadsheets.values.get({
-                spreadsheetId: SPREADSHEET_ID,
-                range: `${SHEET_NAME}!A1:ZZ1`, // Read a wider range for headers
+                spreadsheetId: SPREADSHEET_ID!,
+                range: `${SHEET_NAME}!A1:ZZ1`, 
             });
-            existingHeaders = headerResponse.data.values?.[0] as string[] || [];
+            existingHeaders = (headerResponse.data.values?.[0] as string[] || []).map(h => String(h).trim()); // Trim headers from sheet
             if (existingHeaders.length > 0) {
                 sheetExistsAndHasHeaders = true;
-                console.log("[ExportToSheets] Existing headers fetched:", existingHeaders);
+                console.log("[ExportToSheets] Existing headers fetched (trimmed):", JSON.stringify(existingHeaders));
             } else {
                  console.log("[ExportToSheets] No headers found in A1:ZZ1 (sheet might be empty or headers are not in the first row).");
             }
         } catch (getHeaderError: any) {
              console.error("[ExportToSheets] Error fetching existing headers:", getHeaderError.code, getHeaderError.message, getHeaderError.response?.data?.error);
              if (getHeaderError.code === 400 && getHeaderError.message?.includes('Unable to parse range')) {
-                 console.warn(`[ExportToSheets] Sheet "${SHEET_NAME}" in spreadsheet ${SPREADSHEET_ID} might be empty or range A1:ZZ1 doesn't exist. Will attempt to write headers.`);
+                 console.warn(`[ExportToSheets] Sheet "${SHEET_NAME}" in spreadsheet ${SPREADSHEET_ID!} might be empty or range A1:ZZ1 doesn't exist. Will attempt to write headers.`);
              } else if (getHeaderError.code === 403 || getHeaderError.response?.data?.error?.status === 'PERMISSION_DENIED') {
-                 const errMsg = `Permission denied reading headers from sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID}). Ensure the service account ${GOOGLE_SERVICE_ACCOUNT_EMAIL} has view/edit access.`;
+                 const errMsg = `Permission denied reading headers from sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID!}). Ensure the service account ${GOOGLE_SERVICE_ACCOUNT_EMAIL!} has view/edit access.`;
                  console.error("[ExportToSheets]", errMsg);
                  return { success: false, error: errMsg };
              } else if (getHeaderError.code === 404) {
-                const errMsg = `Spreadsheet not found (ID: ${SPREADSHEET_ID}). Verify GOOGLE_SHEET_ID.`;
+                const errMsg = `Spreadsheet not found (ID: ${SPREADSHEET_ID!}). Verify GOOGLE_SHEET_ID.`;
                 console.error("[ExportToSheets]", errMsg);
                 return { success: false, error: errMsg };
              } else {
@@ -171,11 +174,17 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         }
         
         if (sheetExistsAndHasHeaders) {
-            const headersMatch = JSON.stringify(existingHeaders.slice(0, headers.length)) === JSON.stringify(headers);
+            const appHeadersClean = headers.map(h => String(h).trim());
+            // Compare only up to the length of the app's headers or sheet's headers, whichever is shorter, to avoid issues if sheet has extra columns
+            const comparisonLength = Math.min(appHeadersClean.length, existingHeaders.length);
+            const headersMatch = JSON.stringify(existingHeaders.slice(0, comparisonLength)) === JSON.stringify(appHeadersClean.slice(0, comparisonLength)) && appHeadersClean.length === existingHeaders.length;
+
             if (!headersMatch) {
-                const warningMsg = `Header mismatch in Google Sheet "${SHEET_NAME}". App Expected: [${headers.join(', ')}], Sheet Found: [${existingHeaders.join(', ')}]. The sheet will be cleared and rewritten with the new format.`;
+                const warningMsg = `Header mismatch in Google Sheet "${SHEET_NAME}". App Expected (trimmed, ${appHeadersClean.length} cols): [${appHeadersClean.join(', ')}], Sheet Found (trimmed, ${existingHeaders.length} cols): [${existingHeaders.join(', ')}]. The sheet will be cleared and rewritten with the new format.`;
                 console.warn('[ExportToSheets]', warningMsg);
                 performOverwrite = true;
+            } else {
+                 console.log("[ExportToSheets] Headers match existing sheet headers.");
             }
         }
 
@@ -188,17 +197,17 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
             try {
                 await sheets.spreadsheets.values.clear({
                     spreadsheetId: SPREADSHEET_ID!,
-                    range: `${SHEET_NAME}`, // Clear entire sheet
+                    range: `${SHEET_NAME}`, 
                 });
-                console.log(`[ExportToSheets] Sheet "${SHEET_NAME}" cleared due to header mismatch.`);
-                sheetExistsAndHasHeaders = false; // Treat as if sheet was new for header writing
+                console.log(`[ExportToSheets] Sheet "${SHEET_NAME}" cleared due to header mismatch or intent to overwrite.`);
+                sheetExistsAndHasHeaders = false; 
             } catch (clearError: any) {
                 console.error(`[ExportToSheets] Error clearing sheet "${SHEET_NAME}" for overwrite:`, clearError.message);
                 return { success: false, error: `Failed to clear sheet for format update: ${clearError.message}` };
             }
         }
         
-        if (!sheetExistsAndHasHeaders) { // True if initially empty, or if performOverwrite cleared it
+        if (!sheetExistsAndHasHeaders) { 
             console.log(`[ExportToSheets] Writing/Overwriting headers for sheet: "${SHEET_NAME}".`);
             if (headers.length > 0) {
                 try {
@@ -211,21 +220,18 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                         },
                     });
                     console.log("[ExportToSheets] Headers written successfully.");
-                    sheetExistsAndHasHeaders = true; // Headers are now present and correct
+                    sheetExistsAndHasHeaders = true; 
                 } catch(writeHeaderError: any) {
-                     console.error(`[ExportToSheets] Error writing headers to sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID}). Error: ${writeHeaderError.message}`, writeHeaderError.response?.data?.error);
+                     console.error(`[ExportToSheets] Error writing headers to sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID!}). Error: ${writeHeaderError.message}`, writeHeaderError.response?.data?.error);
                       if (writeHeaderError.code === 403 || writeHeaderError.response?.data?.error?.status === 'PERMISSION_DENIED') {
                           return { success: false, error: `Permission denied writing headers to Google Sheet. Ensure the service account has Editor access.` };
                       }
                       return { success: false, error: `Failed to write headers: ${writeHeaderError.message || 'Unknown error during header write'}` };
                 }
             }
-            // All data is new if headers were just written or sheet was cleared & headers written
             rowsToAppend.push(...data);
-            rowsUpdatedCount = 0; // No updates in this path
-        } else { // Headers existed and matched (performOverwrite was false)
+        } else { 
             console.log("[ExportToSheets] Headers match. Proceeding to check existing data rows for updates/appends.");
-
             const dateColumn = 'A'; 
             const existingDatesMap: Map<string, number> = new Map();
             const dateValuesRange = `${SHEET_NAME}!${dateColumn}2:${dateColumn}`;
@@ -239,12 +245,43 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
 
                 if (dateValuesResponse.data.values) {
                     dateValuesResponse.data.values.forEach((row, index) => {
-                        if (row[0] && String(row[0]).trim() !== "") { 
-                            existingDatesMap.set(String(row[0]), index + 2); 
+                        const rawDateValue = row[0];
+                        if (rawDateValue) {
+                            let dateStringForKey: string | null = null;
+                            // Check if it's already 'YYYY-MM-DD'
+                            if (typeof rawDateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDateValue.trim())) {
+                                dateStringForKey = rawDateValue.trim();
+                            } else {
+                                // Try to parse and reformat other date formats or numbers (Excel date serial)
+                                let parsedDateAttempt: Date | null = null;
+                                if (typeof rawDateValue === 'number') { // Excel/Sheets date serial number
+                                     // Excel stores dates as days since 1899-12-30 (or 1904 for Mac)
+                                     // JS Date is ms since 1970-01-01. This conversion can be tricky.
+                                     // For simplicity, we'll rely on new Date() to parse common string formats first
+                                     // A more robust serial number conversion would be needed if dates are purely numeric
+                                     parsedDateAttempt = new Date(Date.UTC(0, 0, rawDateValue - 1)); // Approximation
+                                } else {
+                                     parsedDateAttempt = parseISO(String(rawDateValue)); // Try ISO format first
+                                     if (!isValid(parsedDateAttempt)) {
+                                        parsedDateAttempt = new Date(String(rawDateValue)); // General JS Date constructor
+                                     }
+                                }
+                                
+                                if (isValid(parsedDateAttempt)) {
+                                    dateStringForKey = format(parsedDateAttempt, 'yyyy-MM-dd');
+                                }
+                            }
+
+                            if (dateStringForKey) {
+                                existingDatesMap.set(dateStringForKey, index + 2); 
+                                console.log(`[ExportToSheets] Mapped date from sheet: Key='${dateStringForKey}', Original='${rawDateValue}', Row=${index + 2}`);
+                            } else {
+                                console.warn(`[ExportToSheets] Could not parse date from sheet at row ${index + 2}: '${rawDateValue}'`);
+                            }
                         }
                     });
                 }
-                console.log(`[ExportToSheets] Found ${existingDatesMap.size} existing dates in data rows of the sheet.`);
+                console.log(`[ExportToSheets] Found ${existingDatesMap.size} mappable existing dates in data rows of the sheet.`);
             } catch (readError: any) {
                 if (readError.code === 400 && readError.message?.includes('Unable to parse range')) {
                      console.warn(`[ExportToSheets] No data rows found (range ${dateValuesRange} might be invalid if sheet has only headers). Proceeding as if no existing data rows. Error: ${readError.message}`);
@@ -260,6 +297,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
 
             data.forEach(rowData => {
                 const dateValue = String(rowData[0]); 
+                console.log(`[ExportToSheets] Processing app data for date: ${dateValue}`);
                 if (existingDatesMap.has(dateValue)) {
                     const rowIndex = existingDatesMap.get(dateValue)!;
                     const endColumnLetter = String.fromCharCode('A'.charCodeAt(0) + headers.length - 1);
@@ -268,8 +306,10 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                         range: range,
                         values: [rowData] 
                     });
+                    console.log(`[ExportToSheets] Queued for update: Date ${dateValue} at row ${rowIndex}, range ${range}`);
                 } else {
                     rowsToAppend.push(rowData);
+                    console.log(`[ExportToSheets] Queued for append: Date ${dateValue}`);
                 }
             });
         }
@@ -288,7 +328,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                 };
                 const batchUpdateResponse = await sheets.spreadsheets.values.batchUpdate(batchUpdateRequest);
                 rowsUpdatedCount = batchUpdateResponse.data.totalUpdatedRows || 0; 
-                console.log(`[ExportToSheets] Batch update successful. ${rowsUpdatedCount} rows/ranges updated.`);
+                console.log(`[ExportToSheets] Batch update successful. ${rowsUpdatedCount} cells/ranges updated.`);
             } catch (batchUpdateError: any) {
                 console.error("[ExportToSheets] Error performing batch update:", batchUpdateError.message, batchUpdateError.response?.data?.error);
                 return { success: false, error: `Failed to update rows: ${batchUpdateError.message}` };
@@ -311,7 +351,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                 console.log(`[ExportToSheets] Append successful. ${rowsAppendedCount} new rows appended.`);
              } catch (appendError: any)
                 {
-                 console.error(`[ExportToSheets] Error appending new data to sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID}). Error: ${appendError.message}`, appendError.response?.data?.error);
+                 console.error(`[ExportToSheets] Error appending new data to sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID!}). Error: ${appendError.message}`, appendError.response?.data?.error);
                   if (appendError.code === 403 || appendError.response?.data?.error?.status === 'PERMISSION_DENIED') {
                       return { success: false, error: `Permission denied appending data to Google Sheet. Ensure the service account has Editor access.` };
                   }
@@ -320,18 +360,18 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         }
         
         let messageParts: string[] = [];
-        if (rowsUpdatedCount > 0) messageParts.push(`${rowsUpdatedCount} wiersz(y) zaktualizowano`);
+        if (rowsUpdatedCount > 0) messageParts.push(`${rowsUpdatedCount} wiersz(y) zaktualizowano`); // Note: totalUpdatedRows refers to cells, but for full row updates, it implies rows.
         if (rowsAppendedCount > 0) messageParts.push(`${rowsAppendedCount} wiersz(y) dodano`);
         
         let summaryMessage = "Nie wprowadzono żadnych zmian w arkuszu.";
         if (messageParts.length > 0) {
             summaryMessage = messageParts.join(', ') + ".";
-        } else if (data.length > 0 && rowsToAppend.length === 0 && rowsToUpdate.length === 0) {
+        } else if (data.length > 0 && rowsToAppend.length === 0 && rowsToUpdate.length === 0 && sheetExistsAndHasHeaders) { // Check sheetExistsAndHasHeaders
             summaryMessage = "Dane z aplikacji są już aktualne w arkuszu.";
         } else if (data.length === 0) {
             summaryMessage = "Brak danych do wysłania.";
         }
-        if (performOverwrite && data.length > 0) {
+        if (performOverwrite && data.length > 0) { // Check if overwrite was performed
             summaryMessage = `Arkusz '${SHEET_NAME}' został zaktualizowany do nowego formatu. ${summaryMessage}`;
         }
 
@@ -347,7 +387,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         } else if (error.code === 403 || error.response?.data?.error?.status === 'PERMISSION_DENIED') {
             errorMessage = "Permission denied. Ensure the service account has editor access to the Google Sheet.";
         } else if (error.code === 404) {
-            errorMessage = `Spreadsheet not found. Verify the GOOGLE_SHEET_ID (${SPREADSHEET_ID}) is correct.`;
+            errorMessage = `Spreadsheet not found. Verify the GOOGLE_SHEET_ID (${SPREADSHEET_ID!}) is correct.`;
         } else if (error.message) {
             errorMessage = `Failed to export: ${error.message}`;
         }
@@ -391,15 +431,15 @@ export async function testReadGoogleSheet(testRange: string = `${SHEET_NAME}!A1:
                 client_email: GOOGLE_SERVICE_ACCOUNT_EMAIL,
                 private_key: GOOGLE_PRIVATE_KEY!,
             },
-            scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'], // Readonly scope is sufficient
+            scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'], 
         });
-        await auth.getClient(); // Verify auth works
+        await auth.getClient(); 
         console.log('[TestReadGoogleSheet] Successfully authenticated with Google Sheets API.');
     } catch (authError: any) {
         console.error('[TestReadGoogleSheet] Error initializing Google Auth:', authError);
         let detailedError = "Failed to authenticate with Google for test read. Check service account credentials.";
         if (authError.message?.includes('PEM_read_bio_PrivateKey') || authError.message?.includes('DECODER routines') || authError.message?.includes('bad base64 decode')) {
-            detailedError = "Authentication failed for test read. Potential issue with GOOGLE_PRIVATE_KEY format or value in .env.local. Please verify it matches the downloaded JSON key exactly, including the BEGIN/END lines and using '\\n' for newlines."
+            detailedError = "Authentication failed for test read. Potential issue with GOOGLE_PRIVATE_KEY format or value in .env.local. Please verify it matches the downloaded JSON key file exactly, including the BEGIN/END lines and using '\\n' for newlines."
         } else if (authError.message) {
             detailedError += ` Specific error: ${authError.message}`;
         }
@@ -412,9 +452,9 @@ export async function testReadGoogleSheet(testRange: string = `${SHEET_NAME}!A1:
         const sheets = google.sheets({ version: 'v4', auth });
         console.log("[TestReadGoogleSheet] Google Sheets API client created.");
 
-        console.log(`[TestReadGoogleSheet] Attempting to get data from sheet ID: ${SPREADSHEET_ID}, range: ${testRange}`);
+        console.log(`[TestReadGoogleSheet] Attempting to get data from sheet ID: ${SPREADSHEET_ID!}, range: ${testRange}`);
         const response = await sheets.spreadsheets.values.get({
-            spreadsheetId: SPREADSHEET_ID,
+            spreadsheetId: SPREADSHEET_ID!,
             range: testRange,
         });
 
@@ -423,12 +463,12 @@ export async function testReadGoogleSheet(testRange: string = `${SHEET_NAME}!A1:
         return { success: true, data: values };
 
     } catch (error: any) {
-        console.error(`[TestReadGoogleSheet] Error reading from sheet ID ${SPREADSHEET_ID}, range ${testRange}:`, error.message, error.stack, error.response?.data?.error);
+        console.error(`[TestReadGoogleSheet] Error reading from sheet ID ${SPREADSHEET_ID!}, range ${testRange}:`, error.message, error.stack, error.response?.data?.error);
         let userFriendlyError = `Failed to read from Google Sheet (range: ${testRange}).`;
          if (error.code === 403 || error.response?.data?.error?.status === 'PERMISSION_DENIED') {
-            userFriendlyError = `Permission denied reading from Google Sheet (range: ${testRange}). Ensure the service account ${GOOGLE_SERVICE_ACCOUNT_EMAIL} has at least Viewer access.`;
+            userFriendlyError = `Permission denied reading from Google Sheet (range: ${testRange}). Ensure the service account ${GOOGLE_SERVICE_ACCOUNT_EMAIL!} has at least Viewer access.`;
         } else if (error.code === 404) {
-            userFriendlyError = `Spreadsheet not found (ID: ${SPREADSHEET_ID}). Verify GOOGLE_SHEET_ID.`;
+            userFriendlyError = `Spreadsheet not found (ID: ${SPREADSHEET_ID!}). Verify GOOGLE_SHEET_ID.`;
         } else if (error.message?.includes('DECODER routines') || error.message?.includes('bad base64 decode')) {
             userFriendlyError = `Authentication-related error during read attempt. Check GOOGLE_PRIVATE_KEY format.`;
         } else if (error.message) {
@@ -437,6 +477,3 @@ export async function testReadGoogleSheet(testRange: string = `${SHEET_NAME}!A1:
         return { success: false, error: userFriendlyError, details: error.response?.data?.error || error.message };
     }
 }
-
-
-    
