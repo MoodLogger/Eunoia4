@@ -5,13 +5,14 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle } from 'lucide-react'; // Added CheckCircle
+import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle } from 'lucide-react';
 import { analyzeMoodPatterns } from '@/ai/flows/analyze-mood-patterns';
-import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets'; // Added testReadGoogleSheet
-import type { DailyEntry, StoredData, ThemeScores } from '@/lib/types';
+import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets';
+import type { DailyEntry, StoredData, ThemeScores, QuestionScore } from '@/lib/types';
 import { getAllEntries } from '@/lib/storage';
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
+import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; // Import helpers
 
 interface MoodAnalysisProps {
   currentEntry: DailyEntry | null;
@@ -37,29 +38,55 @@ function prepareDataForAnalysis(allEntries: StoredData): { moodData: string; the
     };
 }
 
+const generateSheetHeaders = (): string[] => {
+    const headers: string[] = ['Date', 'Suma Punktów'];
+    themeOrder.forEach(themeKey => {
+        headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
+        const questions = getQuestionsForTheme(themeKey);
+        questions.forEach((_, qIndex) => {
+            headers.push(`${themeLabels[themeKey]} - P${qIndex + 1} - Wynik`);
+            headers.push(`${themeLabels[themeKey]} - P${qIndex + 1} - Odpowiedź`);
+        });
+    });
+    return headers;
+};
+
+const SHEET_HEADERS = generateSheetHeaders();
+
 function prepareDataForSheetExport(entry: DailyEntry | null): (string | number | null)[][] {
-    if (!entry || !entry.scores) return [];
+    if (!entry || !entry.scores || !entry.detailedScores) return [];
     
-    const themeScoresArray: (number | null)[] = [];
+    const rowData: (string | number | null)[] = [entry.date];
+    
     let totalSum = 0;
     themeOrder.forEach(themeKey => {
-        const score = entry.scores?.[themeKey] ?? 0;
-        themeScoresArray.push(score);
-        totalSum += score;
+        totalSum += entry.scores?.[themeKey] ?? 0;
     });
-    totalSum = parseFloat(totalSum.toFixed(2)); // Ensure two decimal places
+    rowData.push(parseFloat(totalSum.toFixed(2)));
 
-    const rowData: (string | number | null)[] = [entry.date, totalSum, ...themeScoresArray];
-    return [rowData]; // Return as an array of rows, even if it's just one
+    themeOrder.forEach(themeKey => {
+        rowData.push(entry.scores?.[themeKey] ?? 0); // Overall theme score
+        const questionsCount = getQuestionsForTheme(themeKey).length; // Usually 8
+        for (let qIndex = 0; qIndex < questionsCount; qIndex++) {
+            const questionScoreValue = entry.detailedScores[themeKey]?.[qIndex];
+            const questionScore: QuestionScore | undefined = 
+                (questionScoreValue === -0.25 || questionScoreValue === 0 || questionScoreValue === 0.25) 
+                ? questionScoreValue 
+                : undefined;
+            
+            rowData.push(questionScore ?? 0); // Numerical score (default to 0 if undefined)
+            rowData.push(getAnswerLabelForScore(themeKey, qIndex, questionScore)); // Textual answer
+        }
+    });
+    return [rowData];
 }
 
-const SHEET_HEADERS = ['Date', 'Suma Punktów', ...themeOrder.map(key => themeLabels[key])];
 
 export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   const [isAnalyzing, setIsAnalyzing] = React.useState(false);
   const [isExporting, setIsExporting] = React.useState(false);
   const [analysisResult, setAnalysisResult] = React.useState<string | null>(null);
-  const [exportMessage, setExportMessage] = React.useState<string | null>(null); // For success/info messages
+  const [exportMessage, setExportMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
   const { toast } = useToast();
@@ -70,7 +97,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setIsClient(true);
   }, []);
 
-  const fetchDataForAllEntries = async () => { // Renamed for clarity for analysis
+  const fetchDataForAllEntries = async () => { 
     if (!isClient) return {};
     return await getAllEntries();
   };
@@ -84,7 +111,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setExportMessage(null);
 
     try {
-      const allEntries = await fetchDataForAllEntries(); // Analysis still uses all entries
+      const allEntries = await fetchDataForAllEntries(); 
       const entriesCount = Object.keys(allEntries).length;
 
       if (entriesCount < 3) {
@@ -157,7 +184,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setExportMessage(null);
     toast({ title: "Testowanie odczytu", description: "Próba odczytu z Google Sheet..." });
     try {
-        const result = await testReadGoogleSheet(); // Default range
+        const result = await testReadGoogleSheet(); 
         if (result.success) {
             const successMsg = `Test odczytu udany. Odczytano dane: ${JSON.stringify(result.data || "brak danych w zakresie")}.`;
             setExportMessage(successMsg);
@@ -239,4 +266,3 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
-
