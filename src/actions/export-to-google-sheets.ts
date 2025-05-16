@@ -74,6 +74,17 @@ function isPrivateKeyFormatValid(key: string | undefined): boolean {
     return isValidKey;
 }
 
+// Helper function to convert 0-based column index to A1 notation letter
+function columnIndexToLetter(columnIndex: number): string {
+  let letter = '';
+  let tempColumnIndex = columnIndex;
+  while (tempColumnIndex >= 0) {
+    letter = String.fromCharCode((tempColumnIndex % 26) + 'A'.charCodeAt(0)) + letter;
+    tempColumnIndex = Math.floor(tempColumnIndex / 26) - 1;
+  }
+  return letter;
+}
+
 export async function exportToGoogleSheets(input: ExportInput): Promise<ExportResult> {
     console.log("[ExportToSheets] exportToGoogleSheets called with input:", JSON.stringify(input, null, 2));
     const missingVars: string[] = [];
@@ -145,19 +156,19 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         try {
             const headerResponse = await sheets.spreadsheets.values.get({
                 spreadsheetId: SPREADSHEET_ID!,
-                range: `${SHEET_NAME}!A1:ZZ1`, 
+                range: `${SHEET_NAME}!A1:ZZZ1`, // Read more columns just in case
             });
             existingHeaders = (headerResponse.data.values?.[0] as string[] || []).map(h => String(h).trim()); // Trim headers from sheet
             if (existingHeaders.length > 0) {
                 sheetExistsAndHasHeaders = true;
                 console.log("[ExportToSheets] Existing headers fetched (trimmed):", JSON.stringify(existingHeaders));
             } else {
-                 console.log("[ExportToSheets] No headers found in A1:ZZ1 (sheet might be empty or headers are not in the first row).");
+                 console.log("[ExportToSheets] No headers found in A1:ZZZ1 (sheet might be empty or headers are not in the first row).");
             }
         } catch (getHeaderError: any) {
              console.error("[ExportToSheets] Error fetching existing headers:", getHeaderError.code, getHeaderError.message, getHeaderError.response?.data?.error);
              if (getHeaderError.code === 400 && getHeaderError.message?.includes('Unable to parse range')) {
-                 console.warn(`[ExportToSheets] Sheet "${SHEET_NAME}" in spreadsheet ${SPREADSHEET_ID!} might be empty or range A1:ZZ1 doesn't exist. Will attempt to write headers.`);
+                 console.warn(`[ExportToSheets] Sheet "${SHEET_NAME}" in spreadsheet ${SPREADSHEET_ID!} might be empty or range A1:ZZZ1 doesn't exist. Will attempt to write headers.`);
              } else if (getHeaderError.code === 403 || getHeaderError.response?.data?.error?.status === 'PERMISSION_DENIED') {
                  const errMsg = `Permission denied reading headers from sheet "${SHEET_NAME}" (ID: ${SPREADSHEET_ID!}). Ensure the service account ${GOOGLE_SERVICE_ACCOUNT_EMAIL!} has view/edit access.`;
                  console.error("[ExportToSheets]", errMsg);
@@ -175,9 +186,7 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
         
         if (sheetExistsAndHasHeaders) {
             const appHeadersClean = headers.map(h => String(h).trim());
-            // Compare only up to the length of the app's headers or sheet's headers, whichever is shorter, to avoid issues if sheet has extra columns
-            const comparisonLength = Math.min(appHeadersClean.length, existingHeaders.length);
-            const headersMatch = JSON.stringify(existingHeaders.slice(0, comparisonLength)) === JSON.stringify(appHeadersClean.slice(0, comparisonLength)) && appHeadersClean.length === existingHeaders.length;
+            const headersMatch = JSON.stringify(existingHeaders.slice(0, appHeadersClean.length)) === JSON.stringify(appHeadersClean) && appHeadersClean.length === existingHeaders.length;
 
             if (!headersMatch) {
                 const warningMsg = `Header mismatch in Google Sheet "${SHEET_NAME}". App Expected (trimmed, ${appHeadersClean.length} cols): [${appHeadersClean.join(', ')}], Sheet Found (trimmed, ${existingHeaders.length} cols): [${existingHeaders.join(', ')}]. The sheet will be cleared and rewritten with the new format.`;
@@ -195,25 +204,26 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
 
         if (performOverwrite) {
             try {
+                console.log(`[ExportToSheets] Clearing sheet "${SHEET_NAME}" due to header mismatch or intent to overwrite.`);
                 await sheets.spreadsheets.values.clear({
                     spreadsheetId: SPREADSHEET_ID!,
                     range: `${SHEET_NAME}`, 
                 });
-                console.log(`[ExportToSheets] Sheet "${SHEET_NAME}" cleared due to header mismatch or intent to overwrite.`);
-                sheetExistsAndHasHeaders = false; 
+                console.log(`[ExportToSheets] Sheet "${SHEET_NAME}" cleared.`);
+                sheetExistsAndHasHeaders = false; // Sheet is now empty, headers need to be written
             } catch (clearError: any) {
                 console.error(`[ExportToSheets] Error clearing sheet "${SHEET_NAME}" for overwrite:`, clearError.message);
                 return { success: false, error: `Failed to clear sheet for format update: ${clearError.message}` };
             }
         }
         
-        if (!sheetExistsAndHasHeaders) { 
-            console.log(`[ExportToSheets] Writing/Overwriting headers for sheet: "${SHEET_NAME}".`);
+        if (!sheetExistsAndHasHeaders || performOverwrite) { 
+            console.log(`[ExportToSheets] Writing/Overwriting headers for sheet: "${SHEET_NAME}". Headers count: ${headers.length}`);
             if (headers.length > 0) {
                 try {
                     await sheets.spreadsheets.values.update({
                         spreadsheetId: SPREADSHEET_ID!,
-                        range: `${SHEET_NAME}!A1`,
+                        range: `${SHEET_NAME}!A1`, // Headers always start at A1
                         valueInputOption: 'USER_ENTERED',
                         requestBody: {
                             values: [headers],
@@ -229,15 +239,18 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                       return { success: false, error: `Failed to write headers: ${writeHeaderError.message || 'Unknown error during header write'}` };
                 }
             }
+            // If headers were just written (or sheet was cleared), all current data should be appended
             rowsToAppend.push(...data);
         } else { 
+            // This block executes if headers matched and no overwrite was needed.
             console.log("[ExportToSheets] Headers match. Proceeding to check existing data rows for updates/appends.");
-            const dateColumn = 'A'; 
-            const existingDatesMap: Map<string, number> = new Map();
-            const dateValuesRange = `${SHEET_NAME}!${dateColumn}2:${dateColumn}`;
-
+            const dateColumnLetter = 'A'; // Assuming 'Date' is always the first column
+            const existingDatesMap: Map<string, number> = new Map(); // Maps date string to its row index in sheet
+            
+            // Attempt to read existing dates from the sheet
+            const dateValuesRange = `${SHEET_NAME}!${dateColumnLetter}2:${dateColumnLetter}`; // e.g., Sheet1!A2:A
+            console.log(`[ExportToSheets] Reading existing date values from range: ${dateValuesRange}`);
             try {
-                console.log(`[ExportToSheets] Reading existing date values from range: ${dateValuesRange}`);
                 const dateValuesResponse = await sheets.spreadsheets.values.get({
                     spreadsheetId: SPREADSHEET_ID!,
                     range: dateValuesRange,
@@ -248,32 +261,30 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                         const rawDateValue = row[0];
                         if (rawDateValue) {
                             let dateStringForKey: string | null = null;
-                            // Check if it's already 'YYYY-MM-DD'
                             if (typeof rawDateValue === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(rawDateValue.trim())) {
                                 dateStringForKey = rawDateValue.trim();
                             } else {
-                                // Try to parse and reformat other date formats or numbers (Excel date serial)
                                 let parsedDateAttempt: Date | null = null;
                                 if (typeof rawDateValue === 'number') { // Excel/Sheets date serial number
-                                     // Excel stores dates as days since 1899-12-30 (or 1904 for Mac)
-                                     // JS Date is ms since 1970-01-01. This conversion can be tricky.
-                                     // For simplicity, we'll rely on new Date() to parse common string formats first
-                                     // A more robust serial number conversion would be needed if dates are purely numeric
-                                     parsedDateAttempt = new Date(Date.UTC(0, 0, rawDateValue - 1)); // Approximation
+                                     // This is a common epoch for Sheets/Excel on Windows
+                                     // JS Date uses ms since 1970-01-01 UTC.
+                                     // Serial number is days since 1899-12-30 (day 1).
+                                     // Need to convert days to ms and adjust for epoch difference.
+                                     const excelEpochDiff = 25569; // Days between 1970-01-01 and 1899-12-30
+                                     const dateInMs = (rawDateValue - excelEpochDiff) * 24 * 60 * 60 * 1000;
+                                     parsedDateAttempt = new Date(dateInMs);
                                 } else {
-                                     parsedDateAttempt = parseISO(String(rawDateValue)); // Try ISO format first
+                                     parsedDateAttempt = parseISO(String(rawDateValue)); 
                                      if (!isValid(parsedDateAttempt)) {
-                                        parsedDateAttempt = new Date(String(rawDateValue)); // General JS Date constructor
+                                        parsedDateAttempt = new Date(String(rawDateValue)); 
                                      }
                                 }
-                                
                                 if (isValid(parsedDateAttempt)) {
                                     dateStringForKey = format(parsedDateAttempt, 'yyyy-MM-dd');
                                 }
                             }
-
                             if (dateStringForKey) {
-                                existingDatesMap.set(dateStringForKey, index + 2); 
+                                existingDatesMap.set(dateStringForKey, index + 2); // +2 because sheet rows are 1-indexed and we skip header
                                 console.log(`[ExportToSheets] Mapped date from sheet: Key='${dateStringForKey}', Original='${rawDateValue}', Row=${index + 2}`);
                             } else {
                                 console.warn(`[ExportToSheets] Could not parse date from sheet at row ${index + 2}: '${rawDateValue}'`);
@@ -295,16 +306,17 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
                 }
             }
 
+            // Segregate data into rows to update and rows to append
             data.forEach(rowData => {
-                const dateValue = String(rowData[0]); 
+                const dateValue = String(rowData[0]); // Assuming date is always the first element
                 console.log(`[ExportToSheets] Processing app data for date: ${dateValue}`);
                 if (existingDatesMap.has(dateValue)) {
                     const rowIndex = existingDatesMap.get(dateValue)!;
-                    const endColumnLetter = String.fromCharCode('A'.charCodeAt(0) + headers.length - 1);
-                    const range = `${SHEET_NAME}!${dateColumn}${rowIndex}:${endColumnLetter}${rowIndex}`;
+                    const endColumnLetter = columnIndexToLetter(headers.length - 1);
+                    const range = `${SHEET_NAME}!${dateColumnLetter}${rowIndex}:${endColumnLetter}${rowIndex}`;
                     rowsToUpdate.push({
                         range: range,
-                        values: [rowData] 
+                        values: [rowData] // batchUpdate expects an array of arrays
                     });
                     console.log(`[ExportToSheets] Queued for update: Date ${dateValue} at row ${rowIndex}, range ${range}`);
                 } else {
@@ -321,13 +333,14 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
             try {
                 const batchUpdateRequest = {
                     spreadsheetId: SPREADSHEET_ID!,
-                    requestBody: {
+                    resource: { // Corrected: `resource` instead of `requestBody` for `batchUpdate`
                         valueInputOption: 'USER_ENTERED',
-                        data: rowsToUpdate, 
+                        data: rowsToUpdate, // This is the array of ValueRange objects
                     },
                 };
+                // @ts-ignore - googleapis types might be slightly off for batchUpdate structure, but this matches API docs
                 const batchUpdateResponse = await sheets.spreadsheets.values.batchUpdate(batchUpdateRequest);
-                rowsUpdatedCount = batchUpdateResponse.data.totalUpdatedRows || 0; 
+                rowsUpdatedCount = batchUpdateResponse.data.totalUpdatedRows || 0; // totalUpdatedRows might refer to cells
                 console.log(`[ExportToSheets] Batch update successful. ${rowsUpdatedCount} cells/ranges updated.`);
             } catch (batchUpdateError: any) {
                 console.error("[ExportToSheets] Error performing batch update:", batchUpdateError.message, batchUpdateError.response?.data?.error);
@@ -340,14 +353,14 @@ export async function exportToGoogleSheets(input: ExportInput): Promise<ExportRe
              try {
                 const appendResponse = await sheets.spreadsheets.values.append({
                     spreadsheetId: SPREADSHEET_ID!,
-                    range: `${SHEET_NAME}!A:A`, 
+                    range: `${SHEET_NAME}!A:A`, // Append to the first column to ensure it finds the end of the table
                     valueInputOption: 'USER_ENTERED', 
                     insertDataOption: 'INSERT_ROWS', 
                     requestBody: {
                         values: rowsToAppend,
                     },
                 });
-                rowsAppendedCount = appendResponse.data.updates?.updatedRows || rowsToAppend.length; 
+                rowsAppendedCount = appendResponse.data.updates?.updatedRows || rowsToAppend.length; // Fallback if API doesn't return count
                 console.log(`[ExportToSheets] Append successful. ${rowsAppendedCount} new rows appended.`);
              } catch (appendError: any)
                 {
@@ -477,3 +490,5 @@ export async function testReadGoogleSheet(testRange: string = `${SHEET_NAME}!A1:
         return { success: false, error: userFriendlyError, details: error.response?.data?.error || error.message };
     }
 }
+
+    
