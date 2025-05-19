@@ -12,13 +12,15 @@ import type { DailyEntry, SheetAnalysisResult, ThemeKey, QuestionScore } from '@
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
 import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; 
+import { format, parseISO } from 'date-fns';
+import { pl } from 'date-fns/locale'; // Import Polish locale for date-fns
 
 interface MoodAnalysisProps {
   currentEntry: DailyEntry | null;
 }
 
 const generateSheetHeaders = (): string[] => {
-    const headers: string[] = ['Date', 'Suma Punktów'];
+    const headers: string[] = ['Date', 'Dzień Tygodnia', 'Suma Punktów'];
     
     // Add overall theme scores first
     themeOrder.forEach(themeKey => {
@@ -47,7 +49,10 @@ const SHEET_HEADERS = generateSheetHeaders();
 function prepareDataForSheetExport(entry: DailyEntry | null): (string | number | null)[][] {
     if (!entry || !entry.scores || !entry.detailedScores) return [];
     
-    const rowData: (string | number | null)[] = [entry.date];
+    const dateObj = parseISO(entry.date);
+    const dayOfWeek = format(dateObj, 'EEEE', { locale: pl });
+
+    const rowData: (string | number | null)[] = [entry.date, dayOfWeek];
     
     let totalSum = 0;
     themeOrder.forEach(themeKey => {
@@ -305,3 +310,5 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
+
+    
