@@ -6,11 +6,9 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, TrendingUp, TrendingDown, CalendarDays, Trophy } from 'lucide-react';
-// Removed: import { analyzeMoodPatterns } from '@/ai/flows/analyze-mood-patterns';
-import { analyzeSheetData } from '@/actions/analyze-sheet-data'; // New import
+import { analyzeSheetData } from '@/actions/analyze-sheet-data';
 import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets';
-import type { DailyEntry, StoredData, ThemeScores, QuestionScore, SheetAnalysisResult, ThemeKey } from '@/lib/types'; // Added SheetAnalysisResult
-// Removed: import { getAllEntries } from '@/lib/storage'; - No longer fetching all entries for AI
+import type { DailyEntry, StoredData, ThemeScores, QuestionScore, SheetAnalysisResult, ThemeKey } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
 import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; 
@@ -19,15 +17,19 @@ interface MoodAnalysisProps {
   currentEntry: DailyEntry | null;
 }
 
-// Removed prepareDataForAnalysis function for Genkit AI flow
-
 const generateSheetHeaders = (): string[] => {
     const headers: string[] = ['Date', 'Suma Punktów'];
+    
+    // Add overall theme scores first
     themeOrder.forEach(themeKey => {
         headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
+    });
+
+    // Then add detailed question scores and answers
+    themeOrder.forEach(themeKey => {
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            const sanitizedQuestionText = questionText.substring(0, 100);
+            const sanitizedQuestionText = questionText.substring(0, 100); // Keep basic sanitization
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
         });
@@ -42,14 +44,20 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
     
     const rowData: (string | number | null)[] = [entry.date];
     
+    // Calculate and add total sum
     let totalSum = 0;
     themeOrder.forEach(themeKey => {
         totalSum += entry.scores?.[themeKey] ?? 0;
     });
     rowData.push(parseFloat(totalSum.toFixed(2)));
 
+    // Add overall theme scores
     themeOrder.forEach(themeKey => {
         rowData.push(entry.scores?.[themeKey] ?? 0); 
+    });
+
+    // Add detailed question scores and answers
+    themeOrder.forEach(themeKey => {
         const questionsCount = getQuestionsForTheme(themeKey).length; 
         for (let qIndex = 0; qIndex < questionsCount; qIndex++) {
             const questionScoreValue = entry.detailedScores[themeKey]?.[qIndex];
@@ -69,7 +77,7 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
 export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   const [isAnalyzing, setIsAnalyzing] = React.useState(false);
   const [isExporting, setIsExporting] = React.useState(false);
-  const [analysisResult, setAnalysisResult] = React.useState<SheetAnalysisResult | null>(null); // Changed type
+  const [analysisResult, setAnalysisResult] = React.useState<SheetAnalysisResult | null>(null);
   const [exportMessage, setExportMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
@@ -81,8 +89,6 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setIsClient(true);
   }, []);
 
-  // Removed fetchDataForAllEntries as it's not used by the new analysis logic
-
   const handleAnalyzeMoods = async () => {
     if (!isClient) return;
     
@@ -92,19 +98,8 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setExportMessage(null);
 
     try {
-      // const allEntries = await fetchDataForAllEntries(); // No longer needed for AI
-      // const entriesCount = Object.keys(allEntries).length; // No longer needed for AI
-
-      // if (entriesCount < 3) { // This check might be irrelevant or need to be based on Sheet data count
-      //     setError("Za mało danych do analizy. Proszę logować swoje oceny przez co najmniej 3 dni.");
-      //     setIsAnalyzing(false);
-      //     return;
-      // }
-      // const { moodData, themeScores } = prepareDataForAnalysis(allEntries); // No longer needed for AI
-      // const result = await analyzeMoodPatterns({ moodData, themeScores }); // Old AI call
-      
       toast({ title: "Rozpoczynam analizę danych z Arkusza Google...", description: "To może chwilę potrwać." });
-      const result = await analyzeSheetData(); // New call to sheet analysis
+      const result = await analyzeSheetData();
       
       if (result.success) {
         setAnalysisResult(result);
@@ -130,7 +125,6 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       
       setIsExporting(true);
       setError(null);
-      // setAnalysisResult(null); // Keep analysis result visible during export
       setExportMessage(null);
 
       if (!currentEntry) {
@@ -151,6 +145,8 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
               setIsExporting(false);
               return;
           }
+          console.log("[MoodAnalysis] Exporting with headers:", SHEET_HEADERS);
+          console.log("[MoodAnalysis] Exporting data row:", dataRows[0]);
           const result = await exportToGoogleSheets({ headers: SHEET_HEADERS, data: dataRows });
           if (result.success) {
               const successMsg = result.message || `Dane wyeksportowane. ${result.rowsAppended || 0} wierszy dodanych, ${result.rowsUpdated || 0} wierszy zaktualizowanych.`;
@@ -173,7 +169,6 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     if (!isClient) return;
     setIsTestingSheetRead(true);
     setError(null);
-    // setAnalysisResult(null);
     setExportMessage(null);
     toast({ title: "Testowanie odczytu", description: "Próba odczytu z Google Sheet..." });
     try {
@@ -303,3 +298,6 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
+
+
+    
