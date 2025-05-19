@@ -3,12 +3,12 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, TrendingUp, TrendingDown, CalendarDays, Trophy } from 'lucide-react';
 import { analyzeSheetData } from '@/actions/analyze-sheet-data';
 import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets';
-import type { DailyEntry, StoredData, ThemeScores, QuestionScore, SheetAnalysisResult, ThemeKey } from '@/lib/types';
+import type { DailyEntry, SheetAnalysisResult, ThemeKey, QuestionScore } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
 import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; 
@@ -29,11 +29,16 @@ const generateSheetHeaders = (): string[] => {
     themeOrder.forEach(themeKey => {
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            const sanitizedQuestionText = questionText.substring(0, 100); // Keep basic sanitization
+            const sanitizedQuestionText = questionText.substring(0, 100); 
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
         });
     });
+
+    // Add new headers for positives and negatives
+    headers.push('Pozytywy');
+    headers.push('Negatywy');
+
     return headers;
 };
 
@@ -44,19 +49,16 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
     
     const rowData: (string | number | null)[] = [entry.date];
     
-    // Calculate and add total sum
     let totalSum = 0;
     themeOrder.forEach(themeKey => {
         totalSum += entry.scores?.[themeKey] ?? 0;
     });
     rowData.push(parseFloat(totalSum.toFixed(2)));
 
-    // Add overall theme scores
     themeOrder.forEach(themeKey => {
         rowData.push(entry.scores?.[themeKey] ?? 0); 
     });
 
-    // Add detailed question scores and answers
     themeOrder.forEach(themeKey => {
         const questionsCount = getQuestionsForTheme(themeKey).length; 
         for (let qIndex = 0; qIndex < questionsCount; qIndex++) {
@@ -70,6 +72,11 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
             rowData.push(getAnswerLabelForScore(themeKey, qIndex, questionScore)); 
         }
     });
+
+    // Add positives and negatives data
+    rowData.push(entry.positives || '');
+    rowData.push(entry.negatives || '');
+
     return [rowData];
 }
 
@@ -298,6 +305,3 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
-
-
-    

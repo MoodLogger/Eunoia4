@@ -36,6 +36,8 @@ export interface DailyEntry {
   mood: Mood; // Kept for potential direct mood logging, though calculated mood is primary
   scores: ThemeScores; // Overall theme scores (-2 to +2), calculated from detailedScores
   detailedScores: DetailedThemeScores; // Detailed answers for each question
+  positives?: string; // New field for positive notes
+  negatives?: string; // New field for negative notes
 }
 
 // Structure for storing all data in localStorage
@@ -65,3 +67,4 @@ export interface ParsedSheetEntry {
     totalScore: number;
     themeScores: Partial<Record<ThemeKey, number>>;
 }
+
