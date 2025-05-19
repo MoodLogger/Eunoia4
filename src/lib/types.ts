@@ -48,23 +48,24 @@ export interface StoredData {
 // Type for Google Sheet statistical analysis results
 export type ThemeKey = keyof ThemeScores;
 
-export interface SheetAnalysisResult {
+// Updated result type for AI analysis from sheet data
+export interface AISheetAnalysisResult {
   success: boolean;
+  analysis?: string; // The AI-generated analysis text
   error?: string;
-  message?: string; // General message
-  averageScores?: Partial<Record<ThemeKey, number>>;
-  maxScoreDay?: { date: string; score: number };
-  trends?: Partial<Record<ThemeKey, 'Rosnący' | 'Spadkowy' | 'Stabilny' | 'Za mało danych'>>;
-  processedEntriesCount?: number;
-  period?: string; // e.g., "Ostatnie 30 dni"
-  startDate?: string;
-  endDate?: string;
+  message?: string; // General message from the server action
 }
 
-// Interface for parsed sheet row data for analysis
+
+// Interface for parsed sheet row data for analysis (can be kept for internal processing in the action)
 export interface ParsedSheetEntry {
     date: string;
-    totalScore: number;
-    themeScores: Partial<Record<ThemeKey, number>>;
+    dayOfWeek?: string;
+    totalScore?: number;
+    themeScores?: Partial<Record<ThemeKey, number>>;
+    detailedQuestionScores?: Partial<Record<ThemeKey, Record<number, { score: QuestionScore | undefined; answer: string }>>>;
+    positives?: string;
+    negatives?: string;
+    // Add other raw columns if needed by AI
+    rawRowData?: (string | number | null)[];
 }
-

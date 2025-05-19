@@ -5,15 +5,15 @@ import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, TrendingUp, TrendingDown, CalendarDays, Trophy } from 'lucide-react';
+import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3 } from 'lucide-react'; // Removed TrendingUp, TrendingDown, CalendarDays, Trophy
 import { analyzeSheetData } from '@/actions/analyze-sheet-data';
 import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets';
-import type { DailyEntry, SheetAnalysisResult, ThemeKey, QuestionScore } from '@/lib/types';
+import type { DailyEntry, AISheetAnalysisResult, QuestionScore } from '@/lib/types'; // Updated to AISheetAnalysisResult
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
 import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; 
 import { format, parseISO } from 'date-fns';
-import { pl } from 'date-fns/locale'; // Import Polish locale for date-fns
+import { pl } from 'date-fns/locale'; 
 
 interface MoodAnalysisProps {
   currentEntry: DailyEntry | null;
@@ -22,25 +22,21 @@ interface MoodAnalysisProps {
 const generateSheetHeaders = (): string[] => {
     const headers: string[] = ['Date', 'Dzień Tygodnia', 'Suma Punktów'];
     
-    // Add overall theme scores first
     themeOrder.forEach(themeKey => {
         headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
     });
 
-    // Then add detailed question scores and answers
     themeOrder.forEach(themeKey => {
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            const sanitizedQuestionText = questionText.substring(0, 100); 
+            // Sanitize and shorten question text for header
+            const sanitizedQuestionText = questionText.substring(0, 100); // Preserve Polish characters, limit length
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
         });
     });
-
-    // Add new headers for positives and negatives
     headers.push('Pozytywy');
     headers.push('Negatywy');
-
     return headers;
 };
 
@@ -78,7 +74,6 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
         }
     });
 
-    // Add positives and negatives data
     rowData.push(entry.positives || '');
     rowData.push(entry.negatives || '');
 
@@ -89,7 +84,7 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
 export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   const [isAnalyzing, setIsAnalyzing] = React.useState(false);
   const [isExporting, setIsExporting] = React.useState(false);
-  const [analysisResult, setAnalysisResult] = React.useState<SheetAnalysisResult | null>(null);
+  const [analysisResult, setAnalysisResult] = React.useState<AISheetAnalysisResult | null>(null); // Updated type
   const [exportMessage, setExportMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
@@ -110,23 +105,25 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setExportMessage(null);
 
     try {
-      toast({ title: "Rozpoczynam analizę danych z Arkusza Google...", description: "To może chwilę potrwać." });
-      const result = await analyzeSheetData();
+      toast({ title: "Rozpoczynam analizę danych z Arkusza Google przez AI...", description: "To może chwilę potrwać." });
+      const result = await analyzeSheetData(); // This now calls the AI analysis
       
       if (result.success) {
-        setAnalysisResult(result);
+        setAnalysisResult(result); // Store AI analysis string
         if(result.message) {
-            toast({ title: "Analiza zakończona", description: result.message });
+            toast({ title: "Analiza AI zakończona", description: result.message });
+        } else {
+            toast({ title: "Analiza AI zakończona", description: "Wyniki dostępne poniżej." });
         }
       } else {
-        throw new Error(result.error || "Analiza danych z arkusza nie powiodła się.");
+        throw new Error(result.error || "Analiza danych z arkusza przez AI nie powiodła się.");
       }
 
     } catch (err) {
-      console.error("Error analyzing sheet data:", err);
-      const errorMessage = err instanceof Error ? err.message : "Analiza nie powiodła się.";
+      console.error("Error analyzing sheet data with AI:", err);
+      const errorMessage = err instanceof Error ? err.message : "Analiza AI nie powiodła się.";
       setError(errorMessage);
-      toast({ variant: "destructive", title: "Analiza nie powiodła się", description: errorMessage });
+      toast({ variant: "destructive", title: "Analiza AI nie powiodła się", description: errorMessage });
     } finally {
       setIsAnalyzing(false);
     }
@@ -226,7 +223,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       <CardContent className="space-y-4 p-6">
         <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-4">
             <Button onClick={handleAnalyzeMoods} disabled={isAnalyzing || isExporting || isTestingSheetRead}>
-              {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><BarChart3 className="mr-2 h-4 w-4" /> Analizuj</>}
+              {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Lightbulb className="mr-2 h-4 w-4" /> Analizuj</>}
             </Button>
              <Button onClick={handleExportData} disabled={isAnalyzing || isExporting || isTestingSheetRead || !currentEntry} variant="outline">
               {isExporting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Exportuję...</> : <><UploadCloud className="mr-2 h-4 w-4" /> Export do Arkuszy</>}
@@ -246,56 +243,25 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
             </Alert>
         )}
 
-        {analysisResult && analysisResult.success && !isAnalyzing && (
+        {analysisResult && analysisResult.success && analysisResult.analysis && !isAnalyzing && (
           <Alert variant="default" className="mt-4 bg-accent/10 border-accent text-sm">
             <Lightbulb className="h-4 w-4 text-accent" />
-            <AlertTitle className="text-accent-foreground font-semibold mb-2">Statystyki z Arkusza Google</AlertTitle>
-            <AlertDescription className="text-accent-foreground/90 space-y-2">
-              {analysisResult.period && <p className="flex items-center"><CalendarDays className="mr-2 h-4 w-4" /> {analysisResult.period}</p>}
-              
-              {analysisResult.averageScores && Object.keys(analysisResult.averageScores).length > 0 && (
-                <div>
-                  <h4 className="font-medium mt-2 mb-1">Średnie wyniki pryzmatów:</h4>
-                  <ul className="list-disc pl-5 space-y-1">
-                    {themeOrder.map(themeKey => (
-                       analysisResult.averageScores![themeKey] !== undefined && (
-                        <li key={themeKey}>
-                          {themeLabels[themeKey]}: <span className="font-semibold">{analysisResult.averageScores![themeKey]?.toFixed(2)}</span>
-                        </li>
-                       )
-                    ))}
-                  </ul>
-                </div>
-              )}
-
-              {analysisResult.maxScoreDay && (
-                <p className="flex items-center mt-2"><Trophy className="mr-2 h-4 w-4 text-yellow-500" /> Najlepszy dzień: {analysisResult.maxScoreDay.date} (Suma: <span className="font-semibold">{analysisResult.maxScoreDay.score}</span>)</p>
-              )}
-
-              {analysisResult.trends && Object.keys(analysisResult.trends).length > 0 && (
-                <div>
-                  <h4 className="font-medium mt-3 mb-1">Trendy pryzmatów:</h4>
-                  <ul className="list-disc pl-5 space-y-1">
-                    {themeOrder.map(themeKey => {
-                       const trend = analysisResult.trends![themeKey];
-                       if (trend) {
-                         return (
-                            <li key={themeKey} className="flex items-center">
-                              {themeLabels[themeKey]}: <span className="font-semibold ml-1 mr-1">{trend}</span>
-                              {trend === 'Rosnący' && <TrendingUp className="h-4 w-4 text-green-500" />}
-                              {trend === 'Spadkowy' && <TrendingDown className="h-4 w-4 text-red-500" />}
-                            </li>
-                         );
-                       }
-                       return null;
-                    })}
-                  </ul>
-                </div>
-              )}
-              {analysisResult.processedEntriesCount === 0 && <p>Brak danych w arkuszu dla wybranego okresu.</p>}
+            <AlertTitle className="text-accent-foreground font-semibold mb-2">Analiza AI Nastawienia</AlertTitle>
+            <AlertDescription className="text-accent-foreground/90 space-y-2 whitespace-pre-wrap">
+              {analysisResult.analysis}
             </AlertDescription>
           </Alert>
         )}
+         {analysisResult && analysisResult.success && !analysisResult.analysis && !isAnalyzing && (
+             <Alert variant="default" className="mt-4 bg-primary/10 border-primary">
+                <CheckCircle className="h-4 w-4 text-primary"/>
+                <AlertTitle className="text-primary-foreground">Analiza Zakończona</AlertTitle>
+                <AlertDescription className="text-primary-foreground/90">
+                    {analysisResult.message || "Analiza AI zakończona, ale nie zwróciła tekstu."}
+                </AlertDescription>
+            </Alert>
+         )}
+
 
         {exportMessage && !error && !isExporting && (
             <Alert variant="default" className="mt-4 bg-primary/10 border-primary">
@@ -310,5 +276,3 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
-
-    

@@ -2,32 +2,19 @@
 'use server';
 
 /**
- * @fileOverview Server action to fetch data from Google Sheets and perform statistical analysis.
+ * @fileOverview Server action to fetch data from Google Sheets and perform AI-powered analysis.
  *
- * - analyzeSheetData - Fetches data, calculates stats for the last 30 days.
- * - SheetAnalysisResult - The return type for the analysis function.
+ * - analyzeSheetData - Fetches data, sends it to Genkit flow for analysis.
+ * - AISheetAnalysisResult - The return type for the analysis function.
  */
 
 import { google } from 'googleapis';
 import { z } from 'zod';
-import { format, subDays, isValid, parseISO } from 'date-fns';
-import type { SheetAnalysisResult, ThemeKey, ParsedSheetEntry } from '@/lib/types';
-
-// Define the order and labels for themes for internal consistency
-const THEME_ORDER: ThemeKey[] = [
-    'dreaming', 'moodScore', 'training', 'diet',
-    'socialRelations', 'familyRelations', 'selfEducation'
-];
-
-const THEME_LABELS_PL: Record<ThemeKey, string> = {
-    dreaming: 'Sen',
-    moodScore: 'Nastawienie',
-    training: 'Fitness',
-    diet: 'Odżywianie',
-    socialRelations: 'Relacje zewnętrzne',
-    familyRelations: 'Relacje rodzinne',
-    selfEducation: 'Rozwój intelektualny',
-};
+import { subDays, isValid, parseISO, format } from 'date-fns';
+import type { AISheetAnalysisResult, ParsedSheetEntry, ThemeKey, QuestionScore } from '@/lib/types';
+import { analyzeSheetTrends } from '@/ai/flows/analyze-sheet-trends-flow';
+import { themeOrder, themeLabels } from '@/components/theme-assessment'; // Assuming these are still relevant for header mapping
+import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers';
 
 
 // Environment variables
@@ -41,7 +28,7 @@ if (RAW_GOOGLE_PRIVATE_KEY) {
     try {
         GOOGLE_PRIVATE_KEY = RAW_GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n');
     } catch (e) {
-        console.error("[AnalyzeSheetData] Error processing GOOGLE_PRIVATE_KEY format:", e);
+        console.error("[AnalyzeSheetDataWithAI] Error processing GOOGLE_PRIVATE_KEY format:", e);
     }
 }
 
@@ -50,29 +37,34 @@ function isPrivateKeyFormatValid(key: string | undefined): boolean {
 }
 
 // Helper to get column index by expected name (case-insensitive partial match for flexibility)
-function getColumnIndex(headers: string[], partialName: string): number {
-    const lowerPartialName = partialName.toLowerCase();
-    return headers.findIndex(header => header.toLowerCase().includes(lowerPartialName));
+// This needs to be robust enough to find all the new detailed columns.
+function getColumnIndex(headers: string[], partialName: string, exactMatch: boolean = false): number {
+    const lowerPartialName = partialName.toLowerCase().trim();
+    return headers.findIndex(header => {
+        const lowerHeader = header.toLowerCase().trim();
+        return exactMatch ? lowerHeader === lowerPartialName : lowerHeader.includes(lowerPartialName);
+    });
 }
 
-export async function analyzeSheetData(): Promise<SheetAnalysisResult> {
-    console.log("[AnalyzeSheetData] Starting analysis...");
+
+export async function analyzeSheetData(): Promise<AISheetAnalysisResult> {
+    console.log("[AnalyzeSheetDataWithAI] Starting AI analysis...");
 
     const missingVars: string[] = [];
     if (!SPREADSHEET_ID) missingVars.push("GOOGLE_SHEET_ID");
     if (!GOOGLE_SERVICE_ACCOUNT_EMAIL) missingVars.push("GOOGLE_SERVICE_ACCOUNT_EMAIL");
-    if (!RAW_GOOGLE_PRIVATE_KEY) missingVars.push("GOOGLE_PRIVATE_KEY (missing from .env.local)");
+    if (!RAW_GOOGLE_PRIVATE_KEY) missingVars.push("GOOGLE_PRIVATE_KEY (missing)");
     if (!GOOGLE_PRIVATE_KEY && RAW_GOOGLE_PRIVATE_KEY) missingVars.push("GOOGLE_PRIVATE_KEY (format error)");
 
     if (missingVars.length > 0) {
         const errorMsg = `Błąd konfiguracji serwera: Brakujące zmienne środowiskowe: ${missingVars.join(', ')}.`;
-        console.error("[AnalyzeSheetData]", errorMsg);
+        console.error("[AnalyzeSheetDataWithAI]", errorMsg);
         return { success: false, error: errorMsg };
     }
 
     if (!isPrivateKeyFormatValid(GOOGLE_PRIVATE_KEY)) {
         const errorMsg = `Nieprawidłowy format GOOGLE_PRIVATE_KEY.`;
-        console.error("[AnalyzeSheetData]", errorMsg);
+        console.error("[AnalyzeSheetDataWithAI]", errorMsg);
         return { success: false, error: errorMsg };
     }
 
@@ -84,13 +76,13 @@ export async function analyzeSheetData(): Promise<SheetAnalysisResult> {
         });
         await auth.getClient();
     } catch (authError: any) {
-        console.error('[AnalyzeSheetData] Błąd autoryzacji Google:', authError);
+        console.error('[AnalyzeSheetDataWithAI] Błąd autoryzacji Google:', authError);
         return { success: false, error: `Błąd autoryzacji: ${authError.message}` };
     }
 
     try {
         const sheets = google.sheets({ version: 'v4', auth });
-        console.log(`[AnalyzeSheetData] Reading from sheet: ${SHEET_NAME}, ID: ${SPREADSHEET_ID}`);
+        console.log(`[AnalyzeSheetDataWithAI] Reading from sheet: ${SHEET_NAME}, ID: ${SPREADSHEET_ID}`);
 
         const response = await sheets.spreadsheets.values.get({
             spreadsheetId: SPREADSHEET_ID!,
@@ -98,165 +90,91 @@ export async function analyzeSheetData(): Promise<SheetAnalysisResult> {
         });
 
         const rows = response.data.values;
-        if (!rows || rows.length < 2) { // Need at least header + 1 data row
+        if (!rows || rows.length < 2) {
             return { success: false, error: "Brak wystarczających danych w arkuszu do analizy (potrzebny nagłówek i co najmniej jeden wiersz danych)." };
         }
 
         const headers = rows[0] as string[];
         const dataRows = rows.slice(1);
-
-        // Map headers to indices
-        const dateColIdx = getColumnIndex(headers, 'Date');
-        const totalScoreColIdx = getColumnIndex(headers, 'Suma Punktów');
-        const themeScoreColIndices: Partial<Record<ThemeKey, number>> = {};
-        THEME_ORDER.forEach(themeKey => {
-            const themeLabel = THEME_LABELS_PL[themeKey];
-            const colIdx = getColumnIndex(headers, `${themeLabel} - Wynik Ogólny`);
-            if (colIdx !== -1) {
-                themeScoreColIndices[themeKey] = colIdx;
-            } else {
-                console.warn(`[AnalyzeSheetData] Nie znaleziono kolumny dla ${themeLabel} - Wynik Ogólny`);
-            }
-        });
-        
-        if (dateColIdx === -1 || totalScoreColIdx === -1) {
-            return { success: false, error: "Nie można zlokalizować kolumn 'Date' lub 'Suma Punktów' w arkuszu. Sprawdź nagłówki." };
-        }
-
         const thirtyDaysAgo = subDays(new Date(), 30);
-        const parsedEntries: ParsedSheetEntry[] = [];
+        const sheetEntriesForAI: Record<string, any>[] = [];
+
+        // Map headers to indices more dynamically
+        const headerMap: Record<string, number> = {};
+        headers.forEach((h, i) => headerMap[h.trim().toLowerCase()] = i);
+        
+        console.log("[AnalyzeSheetDataWithAI] Sheet Headers Found:", headers);
+        console.log("[AnalyzeSheetDataWithAI] Mapped Headers:", headerMap);
+
 
         for (const row of dataRows) {
+            const dateColIdx = headerMap['date'];
+            if (dateColIdx === undefined) {
+                 console.error("[AnalyzeSheetDataWithAI] Critical: 'Date' column not found in sheet headers using map:", headers);
+                 return { success: false, error: "Nie można zlokalizować kolumny 'Date'. Sprawdź nagłówki." };
+            }
             const dateStr = row[dateColIdx];
-            const dateObj = parseISO(dateStr); // Assuming YYYY-MM-DD format
+            // Robust date parsing
+            let dateObj: Date | null = null;
+            if (typeof dateStr === 'string') {
+                if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr.trim())) {
+                    dateObj = parseISO(dateStr.trim());
+                }
+            } else if (typeof dateStr === 'number') { // Excel/Sheets date serial number
+                const excelEpochDiff = 25569; 
+                const dateInMs = (dateStr - excelEpochDiff) * 24 * 60 * 60 * 1000;
+                dateObj = new Date(dateInMs);
+            }
+            if (!dateObj || !isValid(dateObj)) {
+                console.warn(`[AnalyzeSheetDataWithAI] Skipping row due to invalid date: ${dateStr}`);
+                continue;
+            }
             
-            if (isValid(dateObj) && dateObj >= thirtyDaysAgo) {
-                const totalScore = parseFloat(row[totalScoreColIdx]);
-                const currentThemeScores: Partial<Record<ThemeKey, number>> = {};
-                THEME_ORDER.forEach(themeKey => {
-                    const colIdx = themeScoreColIndices[themeKey];
-                    if (colIdx !== undefined && row[colIdx] !== undefined && row[colIdx] !== null) {
-                         const scoreVal = parseFloat(String(row[colIdx]).replace(',', '.')); // Handle comma as decimal separator
-                        if (!isNaN(scoreVal)) {
-                            currentThemeScores[themeKey] = scoreVal;
-                        } else {
-                             console.warn(`[AnalyzeSheetData] Nieprawidłowa wartość wyniku dla ${themeKey} w dniu ${dateStr}: ${row[colIdx]}`);
+            if (dateObj >= thirtyDaysAgo) {
+                const entry: Record<string, any> = { date: format(dateObj, 'yyyy-MM-dd') };
+                
+                // Iterate over mapped headers to extract data
+                for (const headerName in headerMap) {
+                    const colIdx = headerMap[headerName];
+                    const originalHeaderKey = headers[colIdx]; // Keep original case for the key in JSON
+                    let value = row[colIdx];
+                    
+                    // Try to parse numbers for score columns
+                    if (typeof value === 'string' && headerName.includes('wynik')) {
+                        const parsedValue = parseFloat(value.replace(',', '.'));
+                        if (!isNaN(parsedValue)) {
+                            value = parsedValue;
                         }
                     }
-                });
-                if (!isNaN(totalScore)) {
-                    parsedEntries.push({ date: dateStr, totalScore, themeScores: currentThemeScores });
-                } else {
-                     console.warn(`[AnalyzeSheetData] Nieprawidłowa wartość Suma Punktów dla dnia ${dateStr}: ${row[totalScoreColIdx]}`);
+                    entry[originalHeaderKey] = value !== undefined ? value : null;
                 }
+                sheetEntriesForAI.push(entry);
             }
         }
         
-        // Sort by date ascending
-        parsedEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        sheetEntriesForAI.sort((a, b) => new Date(a.Date).getTime() - new Date(b.Date).getTime());
 
 
-        if (parsedEntries.length === 0) {
-            return { success: true, message: "Brak danych z ostatnich 30 dni w arkuszu.", processedEntriesCount: 0 };
+        if (sheetEntriesForAI.length === 0) {
+            return { success: true, analysis: "Brak danych z ostatnich 30 dni w arkuszu do analizy.", message: "Brak danych z ostatnich 30 dni." };
         }
         
-        const processedEntriesCount = parsedEntries.length;
-        const startDate = parsedEntries[0].date;
-        const endDate = parsedEntries[parsedEntries.length - 1].date;
+        console.log(`[AnalyzeSheetDataWithAI] Prepared ${sheetEntriesForAI.length} entries for AI analysis.`);
 
-
-        // Calculate average scores
-        const averageScores: Partial<Record<ThemeKey, number>> = {};
-        const sumScores: Partial<Record<ThemeKey, number>> = {};
-        const countScores: Partial<Record<ThemeKey, number>> = {};
-
-        THEME_ORDER.forEach(themeKey => {
-            sumScores[themeKey] = 0;
-            countScores[themeKey] = 0;
-        });
-
-        parsedEntries.forEach(entry => {
-            THEME_ORDER.forEach(themeKey => {
-                if (entry.themeScores[themeKey] !== undefined && !isNaN(entry.themeScores[themeKey]!)) {
-                    sumScores[themeKey]! += entry.themeScores[themeKey]!;
-                    countScores[themeKey]! += 1;
-                }
-            });
-        });
-
-        THEME_ORDER.forEach(themeKey => {
-            if (countScores[themeKey]! > 0) {
-                averageScores[themeKey] = parseFloat((sumScores[themeKey]! / countScores[themeKey]!).toFixed(2));
-            }
-        });
-
-        // Find max score day
-        let maxScore = -Infinity;
-        let maxScoreDate = '';
-        parsedEntries.forEach(entry => {
-            if (entry.totalScore > maxScore) {
-                maxScore = entry.totalScore;
-                maxScoreDate = entry.date;
-            }
-        });
-        const maxScoreDay = { date: maxScoreDate, score: parseFloat(maxScore.toFixed(2)) };
-
-        // Calculate trends (simple comparison of first half vs. second half of the period)
-        const trends: Partial<Record<ThemeKey, 'Rosnący' | 'Spadkowy' | 'Stabilny' | 'Za mało danych'>> = {};
-        const midPoint = Math.floor(processedEntriesCount / 2);
-
-        if (processedEntriesCount < 4) { // Need at least 2 entries in each half for a meaningful trend
-            THEME_ORDER.forEach(themeKey => trends[themeKey] = 'Za mało danych');
-        } else {
-            THEME_ORDER.forEach(themeKey => {
-                let firstHalfSum = 0;
-                let firstHalfCount = 0;
-                let secondHalfSum = 0;
-                let secondHalfCount = 0;
-
-                for (let i = 0; i < midPoint; i++) {
-                    if (parsedEntries[i].themeScores[themeKey] !== undefined && !isNaN(parsedEntries[i].themeScores[themeKey]!)) {
-                        firstHalfSum += parsedEntries[i].themeScores[themeKey]!;
-                        firstHalfCount++;
-                    }
-                }
-                for (let i = midPoint; i < processedEntriesCount; i++) {
-                     if (parsedEntries[i].themeScores[themeKey] !== undefined && !isNaN(parsedEntries[i].themeScores[themeKey]!)) {
-                        secondHalfSum += parsedEntries[i].themeScores[themeKey]!;
-                        secondHalfCount++;
-                    }
-                }
-
-                if (firstHalfCount > 0 && secondHalfCount > 0) {
-                    const avgFirstHalf = firstHalfSum / firstHalfCount;
-                    const avgSecondHalf = secondHalfSum / secondHalfCount;
-                    
-                    if (avgSecondHalf > avgFirstHalf * 1.05) trends[themeKey] = 'Rosnący'; // 5% increase
-                    else if (avgSecondHalf < avgFirstHalf * 0.95) trends[themeKey] = 'Spadkowy'; // 5% decrease
-                    else trends[themeKey] = 'Stabilny';
-                } else {
-                    trends[themeKey] = 'Za mało danych';
-                }
-            });
-        }
+        const sheetDataJson = JSON.stringify(sheetEntriesForAI);
         
-        const period = `Analiza dla okresu: ${startDate} - ${endDate} (${processedEntriesCount} dni).`;
-        console.log("[AnalyzeSheetData] Analysis successful:", { averageScores, maxScoreDay, trends, period });
+        // Call the Genkit flow
+        const aiResult = await analyzeSheetTrends({ sheetDataJson });
+
         return { 
             success: true, 
-            averageScores, 
-            maxScoreDay, 
-            trends, 
-            processedEntriesCount,
-            period,
-            startDate,
-            endDate,
-            message: "Analiza danych z arkusza zakończona sukcesem."
+            analysis: aiResult.analysis,
+            message: `Analiza AI zakończona. Przeanalizowano ${sheetEntriesForAI.length} wpisów.`
         };
 
     } catch (error: any) {
-        console.error('[AnalyzeSheetData] Błąd podczas analizy danych z arkusza:', error);
-        let userFriendlyError = `Nie udało się przeanalizować danych z arkusza.`;
+        console.error('[AnalyzeSheetDataWithAI] Błąd podczas analizy danych z arkusza przez AI:', error);
+        let userFriendlyError = `Nie udało się przeanalizować danych z arkusza za pomocą AI.`;
         if (error.response?.data?.error?.message) {
             userFriendlyError += ` Błąd Google API: ${error.response.data.error.message}`;
         } else if (error.message) {
