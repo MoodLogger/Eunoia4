@@ -17,6 +17,7 @@ const AnalyzeSheetTrendsInputSchema = z.object({
     .describe(
       'A stringified JSON array of objects, where each object represents a day\'s full entry from the Google Sheet. This includes date, day of the week, total score, individual theme scores, detailed question scores (numerical), detailed question answers (textual), "Pozytywy" notes, and "Negatywy" notes for the last 30 days.'
     ),
+  customPrompt: z.string().optional().describe('An optional custom prompt to override the default analysis query.'),
 });
 export type AnalyzeSheetTrendsInput = z.infer<typeof AnalyzeSheetTrendsInputSchema>;
 
@@ -33,7 +34,18 @@ const prompt = ai.definePrompt({
   name: 'analyzeSheetTrendsPrompt',
   input: {schema: AnalyzeSheetTrendsInputSchema},
   output: {schema: AnalyzeSheetTrendsOutputSchema},
-  prompt: `Przeanalizuj dostarczone dane z arkusza kalkulacyjnego z ostatnich 30 dni. Dane te zawierają codzienne zapisy dotyczące nastroju, w tym datę, dzień tygodnia, ogólny wynik punktowy, wyniki poszczególnych pryzmatów (Sen, Nastawienie, Fitness, Odżywianie, Relacje zewnętrzne, Relacje rodzinne, Rozwój intelektualny), szczegółowe odpowiedzi (punktowe i tekstowe) na pytania w ramach każdego pryzmatu oraz notatki "Pozytywy" i "Negatywy".
+  prompt: `{{#if customPrompt}}
+Przeanalizuj dostarczone dane z arkusza kalkulacyjnego z ostatnich 30 dni. Dane te zawierają codzienne zapisy dotyczące nastroju, w tym datę, dzień tygodnia, ogólny wynik punktowy, wyniki poszczególnych pryzmatów (Sen, Nastawienie, Fitness, Odżywianie, Relacje zewnętrzne, Relacje rodzinne, Rozwój intelektualny), szczegółowe odpowiedzi (punktowe i tekstowe) na pytania w ramach każdego pryzmatu oraz notatki "Pozytywy" i "Negatywy".
+
+Dane wejściowe (JSON):
+{{{sheetDataJson}}}
+
+Odpowiedz na następujące pytanie lub wykonaj następujące polecenie:
+{{{customPrompt}}}
+
+Twoja analiza powinna być w języku polskim. Unikaj tworzenia zbyt długich odpowiedzi, skup się na zwięzłych i konkretnych wnioskach.
+{{else}}
+Przeanalizuj dostarczone dane z arkusza kalkulacyjnego z ostatnich 30 dni. Dane te zawierają codzienne zapisy dotyczące nastroju, w tym datę, dzień tygodnia, ogólny wynik punktowy, wyniki poszczególnych pryzmatów (Sen, Nastawienie, Fitness, Odżywianie, Relacje zewnętrzne, Relacje rodzinne, Rozwój intelektualny), szczegółowe odpowiedzi (punktowe i tekstowe) na pytania w ramach każdego pryzmatu oraz notatki "Pozytywy" i "Negatywy".
 
 Dane wejściowe (JSON):
 {{{sheetDataJson}}}
@@ -41,6 +53,7 @@ Dane wejściowe (JSON):
 Na podstawie analizy WSZYSTKICH tych danych liczbowych i tekstowych, odpowiedz na pytanie: Jak zapowiadają się najbliższe dni pod względem nastawienia do życia?
 Twoja analiza powinna być w języku polskim. Skup się na identyfikacji wzorców, korelacji i potencjalnych czynników wpływających na nastawienie. Wskaż, które aspekty (pryzmaty, konkretne odpowiedzi, notatki) wydają się mieć największy wpływ. Zakończ prognozą lub sugestiami dotyczącymi utrzymania pozytywnego nastawienia lub poprawy w przypadku negatywnych trendów.
 Unikaj tworzenia zbyt długich odpowiedzi, skup się na zwięzłych i konkretnych wnioskach.
+{{/if}}
 `,
 });
 
@@ -58,3 +71,4 @@ const analyzeSheetTrendsFlow = ai.defineFlow(
     return output;
   }
 );
+

@@ -3,12 +3,14 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
-import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3 } from 'lucide-react'; // Removed TrendingUp, TrendingDown, CalendarDays, Trophy
+import { Textarea } from '@/components/ui/textarea';
+import { Label } from '@/components/ui/label';
+import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, Edit3 } from 'lucide-react';
 import { analyzeSheetData } from '@/actions/analyze-sheet-data';
 import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets';
-import type { DailyEntry, AISheetAnalysisResult, QuestionScore } from '@/lib/types'; // Updated to AISheetAnalysisResult
+import type { DailyEntry, AISheetAnalysisResult, QuestionScore } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
 import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; 
@@ -29,7 +31,6 @@ const generateSheetHeaders = (): string[] => {
     themeOrder.forEach(themeKey => {
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            // Sanitize and shorten question text for header
             const sanitizedQuestionText = questionText.substring(0, 100); // Preserve Polish characters, limit length
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
@@ -84,19 +85,20 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
 export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   const [isAnalyzing, setIsAnalyzing] = React.useState(false);
   const [isExporting, setIsExporting] = React.useState(false);
-  const [analysisResult, setAnalysisResult] = React.useState<AISheetAnalysisResult | null>(null); // Updated type
+  const [analysisResult, setAnalysisResult] = React.useState<AISheetAnalysisResult | null>(null);
   const [exportMessage, setExportMessage] = React.useState<string | null>(null);
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
   const { toast } = useToast();
   const [isTestingSheetRead, setIsTestingSheetRead] = React.useState(false);
+  const [customPrompt, setCustomPrompt] = React.useState<string>('');
 
 
   React.useEffect(() => {
     setIsClient(true);
   }, []);
 
-  const handleAnalyzeMoods = async () => {
+  const handleAnalyzeData = async (promptToUse?: string) => {
     if (!isClient) return;
     
     setIsAnalyzing(true);
@@ -106,10 +108,10 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
 
     try {
       toast({ title: "Rozpoczynam analizę danych z Arkusza Google przez AI...", description: "To może chwilę potrwać." });
-      const result = await analyzeSheetData(); // This now calls the AI analysis
+      const result = await analyzeSheetData(promptToUse); 
       
       if (result.success) {
-        setAnalysisResult(result); // Store AI analysis string
+        setAnalysisResult(result);
         if(result.message) {
             toast({ title: "Analiza AI zakończona", description: result.message });
         } else {
@@ -222,13 +224,28 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       </CardHeader>
       <CardContent className="space-y-4 p-6">
         <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-4">
-            <Button onClick={handleAnalyzeMoods} disabled={isAnalyzing || isExporting || isTestingSheetRead}>
+            <Button onClick={() => handleAnalyzeData()} disabled={isAnalyzing || isExporting || isTestingSheetRead}>
               {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Lightbulb className="mr-2 h-4 w-4" /> Analizuj</>}
             </Button>
              <Button onClick={handleExportData} disabled={isAnalyzing || isExporting || isTestingSheetRead || !currentEntry} variant="outline">
               {isExporting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Exportuję...</> : <><UploadCloud className="mr-2 h-4 w-4" /> Export do Arkuszy</>}
             </Button>
         </div>
+        <div className="space-y-2 pt-4">
+            <Label htmlFor="custom-prompt">Własny prompt do analizy AI:</Label>
+            <Textarea
+                id="custom-prompt"
+                placeholder="Np. 'Który pryzmat miał największy negatywny wpływ w ostatnim tygodniu?'"
+                value={customPrompt}
+                onChange={(e) => setCustomPrompt(e.target.value)}
+                className="min-h-[80px]"
+                disabled={isAnalyzing || isExporting || isTestingSheetRead}
+            />
+            <Button onClick={() => handleAnalyzeData(customPrompt)} disabled={isAnalyzing || isExporting || isTestingSheetRead || !customPrompt.trim()} className="w-full sm:w-auto">
+              {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Edit3 className="mr-2 h-4 w-4" /> Analizuj z Własnym Promptem</>}
+            </Button>
+        </div>
+
          <div className="flex justify-center pt-2">
             <Button onClick={handleTestSheetRead} disabled={isAnalyzing || isExporting || isTestingSheetRead} variant="secondary" size="sm">
                 {isTestingSheetRead ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Testuję...</> : "Testuj Odczyt Arkusza"}
@@ -276,3 +293,4 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
+

@@ -47,8 +47,11 @@ function getColumnIndex(headers: string[], partialName: string, exactMatch: bool
 }
 
 
-export async function analyzeSheetData(): Promise<AISheetAnalysisResult> {
+export async function analyzeSheetData(customPrompt?: string): Promise<AISheetAnalysisResult> {
     console.log("[AnalyzeSheetDataWithAI] Starting AI analysis...");
+    if (customPrompt) {
+        console.log("[AnalyzeSheetDataWithAI] Using custom prompt:", customPrompt);
+    }
 
     const missingVars: string[] = [];
     if (!SPREADSHEET_ID) missingVars.push("GOOGLE_SHEET_ID");
@@ -164,7 +167,7 @@ export async function analyzeSheetData(): Promise<AISheetAnalysisResult> {
         const sheetDataJson = JSON.stringify(sheetEntriesForAI);
         
         // Call the Genkit flow
-        const aiResult = await analyzeSheetTrends({ sheetDataJson });
+        const aiResult = await analyzeSheetTrends({ sheetDataJson, customPrompt });
 
         return { 
             success: true, 
@@ -183,3 +186,4 @@ export async function analyzeSheetData(): Promise<AISheetAnalysisResult> {
         return { success: false, error: userFriendlyError };
     }
 }
+
