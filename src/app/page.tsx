@@ -26,7 +26,7 @@ interface CalculatedMoodState {
 }
 
 const calculateMoodFromOverallScores = (scores: ThemeScores | undefined): CalculatedMoodState => {
-    if (!scores) return { icon: Loader2, label: 'Obliczanie...', totalScore: null }; 
+    if (!scores) return { icon: Loader2, label: 'Obliczanie...', totalScore: null };
     const themeKeys = Object.keys(scores) as Array<keyof ThemeScores>;
     const sum = themeKeys.reduce((acc, key) => acc + (scores[key] ?? 0), 0);
     const count = themeKeys.length;
@@ -44,6 +44,7 @@ export default function Home() {
   const [calculatedMood, setCalculatedMood] = React.useState<CalculatedMoodState>({ icon: Loader2, label: 'Obliczanie...', totalScore: null });
   const [isClient, setIsClient] = React.useState(false);
   const [isLoadingEntry, setIsLoadingEntry] = React.useState(true);
+  const [logoVersion, setLogoVersion] = React.useState(Date.now()); // For cache busting
 
   React.useEffect(() => {
     setIsClient(true);
@@ -59,7 +60,7 @@ export default function Home() {
         setIsLoadingEntry(false);
         return;
       }
-      
+
       getDailyEntry(selectedDate).then(entry => {
         setDailyEntry(entry);
         setCalculatedMood(calculateMoodFromOverallScores(entry.scores));
@@ -74,7 +75,7 @@ export default function Home() {
 
   React.useEffect(() => {
     if (dailyEntry && isClient && selectedDate && dailyEntry.date === selectedDate && !isLoadingEntry) {
-      saveDailyEntry(dailyEntry).catch(err => { 
+      saveDailyEntry(dailyEntry).catch(err => {
         console.error("Error saving daily entry:", err);
       });
     }
@@ -114,10 +115,11 @@ export default function Home() {
    const handleDateChange = (date: Date | undefined) => {
     if (date) {
       setSelectedDate(format(date, 'yyyy-MM-dd'));
+      setLogoVersion(Date.now()); // Refresh logo version on date change too, just in case
     }
   };
 
-  if (isLoadingEntry && isClient) { 
+  if (isLoadingEntry && isClient) {
      return (
         <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-background">
           <Loader2 className="h-12 w-12 animate-spin text-primary" />
@@ -127,15 +129,15 @@ export default function Home() {
         </main>
       );
   }
-  
-  if (!isClient || !dailyEntry) { 
+
+  if (!isClient || !dailyEntry) {
      return (
         <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-background">
             <div className="w-full max-w-md space-y-6">
                 <Card className="shadow-lg animate-pulse">
                     <CardHeader className="text-center flex flex-col items-center">
                         {/* Placeholder for logo */}
-                        <div className="h-40 w-32 bg-muted rounded mx-auto mb-4"></div> 
+                        <div className="h-40 w-32 bg-muted rounded mx-auto mb-4"></div>
                         <div className="h-4 bg-muted rounded w-3/4 mx-auto mb-2"></div>
                         <div className="h-4 bg-muted rounded w-1/2 mx-auto"></div>
                     </CardHeader>
@@ -182,16 +184,16 @@ export default function Home() {
   }
 
   return (
-    <main className="flex min-h-screen flex-col items-center p-4 pt-6 bg-background"> 
+    <main className="flex min-h-screen flex-col items-center p-4 pt-6 bg-background">
       <div className="w-full max-w-md space-y-6">
         <Card className="shadow-lg">
           <CardHeader className="text-center flex flex-col items-center"> {/* Added flex flex-col items-center */}
-            <Image 
-              src="/eunoia-logo.png" 
-              alt="Eunoia Logo" 
-              width={160} 
-              height={200} 
-              priority 
+            <Image
+              src={`/eunoia-logo.png?v=${logoVersion}`}
+              alt="Eunoia Logo"
+              width={160}
+              height={200}
+              priority
               className="mb-4"
               data-ai-hint="brain logo"
             />
@@ -209,7 +211,7 @@ export default function Home() {
           <CardContent>
              <CalculatedMoodDisplay
                  icon={calculatedMood.icon}
-                 label={calculatedMood.label} 
+                 label={calculatedMood.label}
                  totalScore={calculatedMood.totalScore}
             />
           </CardContent>
@@ -260,5 +262,4 @@ export default function Home() {
     </main>
   );
 }
-    
     
