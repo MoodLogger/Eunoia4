@@ -3,11 +3,11 @@
 
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
-import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, Edit3 } from 'lucide-react';
+import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, Edit3, Mic, MicOff } from 'lucide-react';
 import { analyzeSheetData } from '@/actions/analyze-sheet-data';
 import { exportToGoogleSheets } from '@/actions/export-to-google-sheets';
 import type { DailyEntry, AISheetAnalysisResult, QuestionScore } from '@/lib/types';
@@ -16,6 +16,7 @@ import { themeOrder, themeLabels } from '@/components/theme-assessment';
 import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers';
 import { format, parseISO } from 'date-fns';
 import { pl } from 'date-fns/locale';
+import useSpeechRecognition from '@/hooks/useSpeechRecognition';
 
 interface MoodAnalysisProps {
   currentEntry: DailyEntry | null;
@@ -31,7 +32,6 @@ const generateSheetHeaders = (): string[] => {
     themeOrder.forEach(themeKey => {
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            // Preserve Polish characters, limit length
             const sanitizedQuestionText = questionText.substring(0, 100); 
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
@@ -92,11 +92,25 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   const [isClient, setIsClient] = React.useState(false);
   const { toast } = useToast();
   const [customPrompt, setCustomPrompt] = React.useState<string>('');
+  const aiPromptSpeech = useSpeechRecognition();
 
 
   React.useEffect(() => {
     setIsClient(true);
   }, []);
+
+  React.useEffect(() => {
+    if (!aiPromptSpeech.isListening && aiPromptSpeech.transcript) {
+        setCustomPrompt(prev => (prev ? prev + ' ' : '') + aiPromptSpeech.transcript.trim());
+        aiPromptSpeech.clearTranscript();
+    }
+  }, [aiPromptSpeech.isListening, aiPromptSpeech.transcript, aiPromptSpeech.clearTranscript]);
+  
+  React.useEffect(() => {
+    if (aiPromptSpeech.error) {
+        toast({ variant: "destructive", title: "Błąd nagrywania (Zapytaj AI)", description: aiPromptSpeech.error });
+    }
+  }, [aiPromptSpeech.error, toast]);
 
   const handleAnalyzeData = async (promptToUse?: string) => {
     if (!isClient) return;
@@ -104,7 +118,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setIsAnalyzing(true);
     setError(null);
     setAnalysisResult(null);
-    setExportMessage(null);
+    setExportMessage(null); // Clear previous export messages when starting analysis
 
     try {
       toast({ title: "Rozpoczynam analizę danych z Arkusza Google przez AI...", description: "To może chwilę potrwać." });
@@ -137,6 +151,8 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       setIsExporting(true);
       setError(null);
       setExportMessage(null);
+      setAnalysisResult(null); // Clear previous analysis results when starting export
+
 
       if (!currentEntry) {
         const noDataMsg = "Brak danych dla wybranego dnia do wyeksportowania.";
@@ -200,23 +216,45 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       <CardContent className="space-y-4 p-6">
         <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-4">
             <Button onClick={() => handleAnalyzeData()} disabled={isAnalyzing || isExporting}>
-              {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Lightbulb className="mr-2 h-4 w-4" /> Analizuj</>}
+              {isAnalyzing && !customPrompt ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Lightbulb className="mr-2 h-4 w-4" /> Analizuj</>}
             </Button>
              <Button onClick={handleExportData} disabled={isAnalyzing || isExporting || !currentEntry} variant="outline">
               {isExporting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Exportuję...</> : <><UploadCloud className="mr-2 h-4 w-4" /> Export do Arkuszy</>}
             </Button>
         </div>
         <div className="space-y-2 pt-4">
-            <Label htmlFor="custom-prompt">Zapytaj AI:</Label>
-            <Textarea
-                id="custom-prompt"
-                placeholder="Np. 'Który pryzmat miał największy negatywny wpływ w ostatnim tygodniu?'"
-                value={customPrompt}
-                onChange={(e) => setCustomPrompt(e.target.value)}
-                className="min-h-[80px]"
-                disabled={isAnalyzing || isExporting}
-            />
-            <Button onClick={() => handleAnalyzeData(customPrompt)} disabled={isAnalyzing || isExporting || !customPrompt.trim()} className="w-full sm:w-auto">
+            <div className="relative">
+                <Label htmlFor="custom-prompt" className="flex items-center mb-1">Zapytaj AI:</Label>
+                <Textarea
+                    id="custom-prompt"
+                    placeholder="Np. 'Który pryzmat miał największy negatywny wpływ w ostatnim tygodniu?'"
+                    value={customPrompt}
+                    onChange={(e) => setCustomPrompt(e.target.value)}
+                    className="min-h-[80px] pr-10"
+                    disabled={isAnalyzing || isExporting}
+                />
+                {aiPromptSpeech.hasRecognitionSupport && (
+                    <Button
+                        type="button"
+                        size="icon"
+                        variant="ghost"
+                        className="absolute bottom-2 right-1 h-8 w-8"
+                        onClick={aiPromptSpeech.isListening ? aiPromptSpeech.stopListening : aiPromptSpeech.startListening}
+                        title={aiPromptSpeech.isListening ? "Zatrzymaj nagrywanie" : "Rozpocznij nagrywanie (Zapytaj AI)"}
+                        disabled={isAnalyzing || isExporting || aiPromptSpeech.permissionStatus === 'denied'}
+                    >
+                        {aiPromptSpeech.isListening ? <MicOff className="h-5 w-5 text-red-500" /> : <Mic className="h-5 w-5" />}
+                    </Button>
+                )}
+            </div>
+             {aiPromptSpeech.interimTranscript && aiPromptSpeech.isListening && (
+                <p className="text-xs text-muted-foreground">Słucham (AI): <em>{aiPromptSpeech.interimTranscript}</em></p>
+            )}
+            {aiPromptSpeech.permissionStatus === 'denied' && <p className="text-xs text-red-500 mt-1">Odmówiono dostępu do mikrofonu dla pola 'Zapytaj AI'.</p>}
+            {!aiPromptSpeech.hasRecognitionSupport && customPrompt === '' && <p className="text-xs text-muted-foreground mt-1">Rozpoznawanie mowy nie jest wspierane.</p>}
+
+
+            <Button onClick={() => handleAnalyzeData(customPrompt)} disabled={isAnalyzing || isExporting || !customPrompt.trim()} className="w-full sm:w-auto mt-2">
               {isAnalyzing && customPrompt ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Edit3 className="mr-2 h-4 w-4" /> Odpowiedź AI</>}
             </Button>
         </div>
@@ -262,4 +300,3 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     </Card>
   );
 }
-

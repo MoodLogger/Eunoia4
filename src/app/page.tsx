@@ -2,9 +2,9 @@
 "use client";
 
 import * as React from 'react';
-import Image from 'next/image'; // Import next/image
+import Image from 'next/image';
 import { format, isValid, parseISO } from 'date-fns';
-import { pl } from 'date-fns/locale';
+// import { pl } from 'date-fns/locale'; // Assuming Polish locale for formatting
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { ThemeAssessment } from '@/components/theme-assessment';
 import { MoodAnalysis } from '@/components/mood-analysis';
@@ -12,10 +12,13 @@ import { CalculatedMoodDisplay } from '@/components/calculated-mood-display';
 import { saveDailyEntry, getDailyEntry, calculateOverallScores } from '@/lib/storage';
 import type { DailyEntry, Mood, ThemeScores, DetailedThemeScores, QuestionScore } from '@/lib/types';
 import type { LucideIcon } from 'lucide-react';
-import { Frown, Meh, Smile, Loader2, BookText, ThumbsUp, ThumbsDown, CalendarDays } from 'lucide-react';
+import { Frown, Meh, Smile, Loader2, BookText, ThumbsUp, ThumbsDown, CalendarDays, Mic, MicOff } from 'lucide-react';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
+import { Button } from '@/components/ui/button';
+import useSpeechRecognition from '@/hooks/useSpeechRecognition';
+import { useToast } from "@/hooks/use-toast";
 
 
 type CalculatedMoodCategory = 'Bad' | 'Normal' | 'Good' | 'Obliczanie...';
@@ -30,12 +33,18 @@ const calculateMoodFromOverallScores = (scores: ThemeScores | undefined): Calcul
     const themeKeys = Object.keys(scores) as Array<keyof ThemeScores>;
     const sum = themeKeys.reduce((acc, key) => acc + (scores[key] ?? 0), 0);
     const count = themeKeys.length;
-    const average = count > 0 ? sum / count : 0; // Avoid division by zero
+    const average = count > 0 ? sum / count : 0;
     const badThreshold = -0.75;
     const goodThreshold = 0.75;
-    if (average <= badThreshold) return { icon: Frown, label: 'Bad', totalScore: parseFloat(sum.toFixed(2)) };
-    if (average >= goodThreshold) return { icon: Smile, label: 'Good', totalScore: parseFloat(sum.toFixed(2)) };
-    return { icon: Meh, label: 'Normal', totalScore: parseFloat(sum.toFixed(2)) };
+
+    let polishLabel: CalculatedMoodCategory = 'Obliczanie...';
+    if (average <= badThreshold) polishLabel = 'Bad';
+    else if (average >= goodThreshold) polishLabel = 'Good';
+    else polishLabel = 'Normal';
+
+    if (average <= badThreshold) return { icon: Frown, label: polishLabel, totalScore: parseFloat(sum.toFixed(2)) };
+    if (average >= goodThreshold) return { icon: Smile, label: polishLabel, totalScore: parseFloat(sum.toFixed(2)) };
+    return { icon: Meh, label: polishLabel, totalScore: parseFloat(sum.toFixed(2)) };
 };
 
 export default function Home() {
@@ -44,7 +53,11 @@ export default function Home() {
   const [calculatedMood, setCalculatedMood] = React.useState<CalculatedMoodState>({ icon: Loader2, label: 'Obliczanie...', totalScore: null });
   const [isClient, setIsClient] = React.useState(false);
   const [isLoadingEntry, setIsLoadingEntry] = React.useState(true);
-  const [logoVersion, setLogoVersion] = React.useState(Date.now()); // For cache busting
+  const [logoVersion, setLogoVersion] = React.useState(Date.now());
+  const { toast } = useToast();
+
+  const positivesSpeech = useSpeechRecognition();
+  const negativesSpeech = useSpeechRecognition();
 
   React.useEffect(() => {
     setIsClient(true);
@@ -67,7 +80,7 @@ export default function Home() {
         setIsLoadingEntry(false);
       }).catch(err => {
         console.error("Error fetching daily entry:", err);
-        setDailyEntry(null); // Ensure dailyEntry is null on error to avoid issues
+        setDailyEntry(null);
         setIsLoadingEntry(false);
       });
     }
@@ -80,7 +93,6 @@ export default function Home() {
       });
     }
   }, [dailyEntry, isClient, selectedDate, isLoadingEntry]);
-
 
    const handleQuestionScoreChange = (
        theme: keyof ThemeScores,
@@ -112,10 +124,47 @@ export default function Home() {
     });
    };
 
+    React.useEffect(() => {
+        if (!positivesSpeech.isListening && positivesSpeech.transcript) {
+            setDailyEntry((prevEntry) => {
+                if (!prevEntry) return null;
+                const currentText = prevEntry.positives || '';
+                const newText = currentText + (currentText ? ' ' : '') + positivesSpeech.transcript;
+                positivesSpeech.clearTranscript();
+                return { ...prevEntry, positives: newText.trim() };
+            });
+        }
+    }, [positivesSpeech.isListening, positivesSpeech.transcript, positivesSpeech.clearTranscript]);
+
+    React.useEffect(() => {
+        if (!negativesSpeech.isListening && negativesSpeech.transcript) {
+            setDailyEntry((prevEntry) => {
+                if (!prevEntry) return null;
+                const currentText = prevEntry.negatives || '';
+                const newText = currentText + (currentText ? ' ' : '') + negativesSpeech.transcript;
+                negativesSpeech.clearTranscript();
+                return { ...prevEntry, negatives: newText.trim() };
+            });
+        }
+    }, [negativesSpeech.isListening, negativesSpeech.transcript, negativesSpeech.clearTranscript]);
+    
+    React.useEffect(() => {
+        if (positivesSpeech.error) {
+            toast({ variant: "destructive", title: "Błąd nagrywania (Pozytywy)", description: positivesSpeech.error });
+        }
+    }, [positivesSpeech.error, toast]);
+
+    React.useEffect(() => {
+        if (negativesSpeech.error) {
+            toast({ variant: "destructive", title: "Błąd nagrywania (Negatywy)", description: negativesSpeech.error });
+        }
+    }, [negativesSpeech.error, toast]);
+
+
    const handleDateChange = (date: Date | undefined) => {
     if (date) {
       setSelectedDate(format(date, 'yyyy-MM-dd'));
-      setLogoVersion(Date.now()); // Refresh logo version on date change too, just in case
+      setLogoVersion(Date.now());
     }
   };
 
@@ -136,7 +185,6 @@ export default function Home() {
             <div className="w-full max-w-md space-y-6">
                 <Card className="shadow-lg animate-pulse">
                     <CardHeader className="text-center flex flex-col items-center">
-                        {/* Placeholder for logo */}
                         <div className="h-40 w-32 bg-muted rounded mx-auto mb-4"></div>
                         <div className="h-4 bg-muted rounded w-3/4 mx-auto mb-2"></div>
                         <div className="h-4 bg-muted rounded w-1/2 mx-auto"></div>
@@ -187,27 +235,27 @@ export default function Home() {
     <main className="flex min-h-screen flex-col items-center p-4 pt-6 bg-background">
       <div className="w-full max-w-md space-y-6">
         <Card className="shadow-lg">
-          <CardHeader className="text-center flex flex-col items-center pb-2"> {/* Reduced bottom padding */}
+          <CardHeader className="text-center flex flex-col items-center pb-2">
             <Image
               src={`/eunoia-logo.png?v=${logoVersion}`}
               alt="Eunoia Logo"
               width={160}
               height={200}
               priority
-              className="mb-2" // Reduced bottom margin
+              className="mb-2"
               data-ai-hint="brain logo"
             />
-            <CardDescription className="flex flex-row items-center justify-center space-x-2 w-full mt-2"> {/* Use flex-row, justify-center and space-x-2 for horizontal layout. Reduced top margin. */}
+            <CardDescription className="flex flex-row items-center justify-center space-x-2 w-full mt-2">
               <Label htmlFor="date-picker-button" className="text-base font-medium">Data:</Label>
               <DatePicker
                 id="date-picker-button"
                 date={selectedDate ? parseISO(selectedDate) : new Date()}
                 onDateChange={handleDateChange}
-                className="w-auto" // Allow DatePicker to shrink if needed
+                className="w-auto"
               />
             </CardDescription>
           </CardHeader>
-          <CardContent className="pt-2"> {/* Reduced top padding */}
+          <CardContent className="pt-2">
              <CalculatedMoodDisplay
                  icon={calculatedMood.icon}
                  label={calculatedMood.label}
@@ -229,7 +277,7 @@ export default function Home() {
             </CardTitle>
           </CardHeader>
           <CardContent className="space-y-4 p-6">
-            <div>
+            <div className="relative">
               <Label htmlFor="positives-notes" className="flex items-center mb-1 text-green-600 dark:text-green-400">
                 <ThumbsUp className="mr-2 h-4 w-4" /> Pozytywy
               </Label>
@@ -238,10 +286,30 @@ export default function Home() {
                 placeholder="Co dobrego się dzisiaj wydarzyło? Jakie pozytywne myśli Ci towarzyszyły?"
                 value={dailyEntry.positives || ''}
                 onChange={(e) => handleNotesChange('positives', e.target.value)}
-                className="min-h-[100px] border-green-300 focus:border-green-500 focus:ring-green-500"
+                className="min-h-[100px] border-green-300 focus:border-green-500 focus:ring-green-500 pr-10"
               />
+              {positivesSpeech.hasRecognitionSupport && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute bottom-2 right-1 h-8 w-8"
+                  onClick={positivesSpeech.isListening ? positivesSpeech.stopListening : positivesSpeech.startListening}
+                  title={positivesSpeech.isListening ? "Zatrzymaj nagrywanie" : "Rozpocznij nagrywanie (Pozytywy)"}
+                  disabled={positivesSpeech.permissionStatus === 'denied'}
+                >
+                  {positivesSpeech.isListening ? <MicOff className="h-5 w-5 text-red-500" /> : <Mic className="h-5 w-5" />}
+                </Button>
+              )}
             </div>
-            <div>
+            {positivesSpeech.interimTranscript && positivesSpeech.isListening && (
+                <p className="text-xs text-muted-foreground">Słucham (Pozytywy): <em>{positivesSpeech.interimTranscript}</em></p>
+            )}
+            {positivesSpeech.permissionStatus === 'denied' && <p className="text-xs text-red-500 mt-1">Odmówiono dostępu do mikrofonu dla pola 'Pozytywy'.</p>}
+            {!positivesSpeech.hasRecognitionSupport && <p className="text-xs text-muted-foreground mt-1">Rozpoznawanie mowy nie jest wspierane.</p>}
+
+
+            <div className="relative">
               <Label htmlFor="negatives-notes" className="flex items-center mb-1 text-red-600 dark:text-red-400">
                 <ThumbsDown className="mr-2 h-4 w-4" /> Negatywy
               </Label>
@@ -250,9 +318,26 @@ export default function Home() {
                 placeholder="Co poszło nie tak? Jakie negatywne myśli lub emocje się pojawiły?"
                 value={dailyEntry.negatives || ''}
                 onChange={(e) => handleNotesChange('negatives', e.target.value)}
-                className="min-h-[100px] border-red-300 focus:border-red-500 focus:ring-red-500"
+                className="min-h-[100px] border-red-300 focus:border-red-500 focus:ring-red-500 pr-10"
               />
+               {negativesSpeech.hasRecognitionSupport && (
+                <Button
+                  type="button"
+                  size="icon"
+                  variant="ghost"
+                  className="absolute bottom-2 right-1 h-8 w-8"
+                  onClick={negativesSpeech.isListening ? negativesSpeech.stopListening : negativesSpeech.startListening}
+                  title={negativesSpeech.isListening ? "Zatrzymaj nagrywanie" : "Rozpocznij nagrywanie (Negatywy)"}
+                  disabled={negativesSpeech.permissionStatus === 'denied'}
+                >
+                  {negativesSpeech.isListening ? <MicOff className="h-5 w-5 text-red-500" /> : <Mic className="h-5 w-5" />}
+                </Button>
+              )}
             </div>
+            {negativesSpeech.interimTranscript && negativesSpeech.isListening && (
+                <p className="text-xs text-muted-foreground">Słucham (Negatywy): <em>{negativesSpeech.interimTranscript}</em></p>
+            )}
+            {negativesSpeech.permissionStatus === 'denied' && <p className="text-xs text-red-500 mt-1">Odmówiono dostępu do mikrofonu dla pola 'Negatywy'.</p>}
           </CardContent>
         </Card>
 
@@ -261,4 +346,3 @@ export default function Home() {
     </main>
   );
 }
-    
