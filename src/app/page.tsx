@@ -2,6 +2,7 @@
 "use client";
 
 import * as React from 'react';
+import Image from 'next/image'; // Import next/image
 import { format, isValid, parseISO } from 'date-fns';
 import { pl } from 'date-fns/locale';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
@@ -132,8 +133,10 @@ export default function Home() {
         <main className="flex min-h-screen flex-col items-center justify-center p-4 bg-background">
             <div className="w-full max-w-md space-y-6">
                 <Card className="shadow-lg animate-pulse">
-                    <CardHeader className="text-center">
-                        <div className="h-8 bg-muted rounded w-3/4 mx-auto mb-2"></div>
+                    <CardHeader className="text-center flex flex-col items-center">
+                        {/* Placeholder for logo */}
+                        <div className="h-40 w-32 bg-muted rounded mx-auto mb-4"></div> 
+                        <div className="h-4 bg-muted rounded w-3/4 mx-auto mb-2"></div>
                         <div className="h-4 bg-muted rounded w-1/2 mx-auto"></div>
                     </CardHeader>
                     <CardContent className="flex flex-col items-center justify-center py-4 space-y-2">
@@ -182,8 +185,17 @@ export default function Home() {
     <main className="flex min-h-screen flex-col items-center p-4 pt-6 bg-background"> 
       <div className="w-full max-w-md space-y-6">
         <Card className="shadow-lg">
-          <CardHeader className="text-center">
-            <CardTitle className="text-3xl font-bold text-primary">Eunoia</CardTitle>
+          <CardHeader className="text-center flex flex-col items-center"> {/* Added flex flex-col items-center */}
+            <Image 
+              src="/eunoia-logo.png" 
+              alt="Eunoia Logo" 
+              width={160} 
+              height={200} 
+              priority 
+              className="mb-4"
+              data-ai-hint="brain logo"
+            />
+            {/* <CardTitle className="text-3xl font-bold text-primary">Eunoia</CardTitle> */} {/* Commented out as logo contains text */}
             <CardDescription className="flex flex-col items-center space-y-2">
               <span>
                 Ogólna ocena z dnia {selectedDate && isValid(parseISO(selectedDate)) ? format(parseISO(selectedDate), 'd MMMM yyyy', { locale: pl }) : '...'}
@@ -248,3 +260,5 @@ export default function Home() {
     </main>
   );
 }
+    
+    
