@@ -12,7 +12,7 @@ import { CalculatedMoodDisplay } from '@/components/calculated-mood-display';
 import { saveDailyEntry, getDailyEntry, calculateOverallScores } from '@/lib/storage';
 import type { DailyEntry, Mood, ThemeScores, DetailedThemeScores, QuestionScore } from '@/lib/types';
 import type { LucideIcon } from 'lucide-react';
-import { Frown, Meh, Smile, Loader2, BookText, ThumbsUp, ThumbsDown } from 'lucide-react';
+import { Frown, Meh, Smile, Loader2, BookText, ThumbsUp, ThumbsDown, CalendarDays } from 'lucide-react';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -187,28 +187,27 @@ export default function Home() {
     <main className="flex min-h-screen flex-col items-center p-4 pt-6 bg-background">
       <div className="w-full max-w-md space-y-6">
         <Card className="shadow-lg">
-          <CardHeader className="text-center flex flex-col items-center"> {/* Added flex flex-col items-center */}
+          <CardHeader className="text-center flex flex-col items-center pb-2"> {/* Reduced bottom padding */}
             <Image
               src={`/eunoia-logo.png?v=${logoVersion}`}
               alt="Eunoia Logo"
               width={160}
               height={200}
               priority
-              className="mb-4"
+              className="mb-2" // Reduced bottom margin
               data-ai-hint="brain logo"
             />
-            {/* <CardTitle className="text-3xl font-bold text-primary">Eunoia</CardTitle> */} {/* Commented out as logo contains text */}
-            <CardDescription className="flex flex-col items-center space-y-2">
-              <span>
-                Ogólna ocena z dnia {selectedDate && isValid(parseISO(selectedDate)) ? format(parseISO(selectedDate), 'd MMMM yyyy', { locale: pl }) : '...'}
-              </span>
+            <CardDescription className="flex flex-row items-center justify-center space-x-2 w-full mt-2"> {/* Use flex-row, justify-center and space-x-2 for horizontal layout. Reduced top margin. */}
+              <Label htmlFor="date-picker-button" className="text-base font-medium">Data:</Label>
               <DatePicker
+                id="date-picker-button"
                 date={selectedDate ? parseISO(selectedDate) : new Date()}
                 onDateChange={handleDateChange}
+                className="w-auto" // Allow DatePicker to shrink if needed
               />
             </CardDescription>
           </CardHeader>
-          <CardContent>
+          <CardContent className="pt-2"> {/* Reduced top padding */}
              <CalculatedMoodDisplay
                  icon={calculatedMood.icon}
                  label={calculatedMood.label}

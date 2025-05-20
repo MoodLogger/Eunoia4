@@ -19,9 +19,10 @@ interface DatePickerProps {
   date: Date | undefined;
   onDateChange: (date: Date | undefined) => void;
   className?: string;
+  id?: string; // Added id prop for associating with Label
 }
 
-export function DatePicker({ date, onDateChange, className }: DatePickerProps) {
+export function DatePicker({ date, onDateChange, className, id }: DatePickerProps) {
   const [calendarOpen, setCalendarOpen] = React.useState(false);
 
   const handleSelectDate = (selectedDate: Date | undefined) => {
@@ -33,9 +34,10 @@ export function DatePicker({ date, onDateChange, className }: DatePickerProps) {
     <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
       <PopoverTrigger asChild>
         <Button
+          id={id} // Apply the id to the button
           variant={"outline"}
           className={cn(
-            "w-[280px] justify-start text-left font-normal",
+            "w-auto justify-start text-left font-normal px-3", // w-auto and reduced padding
             !date && "text-muted-foreground",
             className
           )}
@@ -57,3 +59,4 @@ export function DatePicker({ date, onDateChange, className }: DatePickerProps) {
     </Popover>
   )
 }
+
