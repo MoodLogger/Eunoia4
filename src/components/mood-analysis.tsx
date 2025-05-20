@@ -232,7 +232,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
             </Button>
         </div>
         <div className="space-y-2 pt-4">
-            <Label htmlFor="custom-prompt">Własny prompt do analizy AI:</Label>
+            <Label htmlFor="custom-prompt">Zapytaj AI:</Label>
             <Textarea
                 id="custom-prompt"
                 placeholder="Np. 'Który pryzmat miał największy negatywny wpływ w ostatnim tygodniu?'"
