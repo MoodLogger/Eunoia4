@@ -13,9 +13,9 @@ import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-g
 import type { DailyEntry, AISheetAnalysisResult, QuestionScore } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
-import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers'; 
+import { getQuestionsForTheme, getAnswerLabelForScore } from '@/lib/question-helpers';
 import { format, parseISO } from 'date-fns';
-import { pl } from 'date-fns/locale'; 
+import { pl } from 'date-fns/locale';
 
 interface MoodAnalysisProps {
   currentEntry: DailyEntry | null;
@@ -23,11 +23,13 @@ interface MoodAnalysisProps {
 
 const generateSheetHeaders = (): string[] => {
     const headers: string[] = ['Date', 'Dzień Tygodnia', 'Suma Punktów'];
-    
+
+    // Add overall scores for each theme first
     themeOrder.forEach(themeKey => {
         headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
     });
 
+    // Then add detailed question scores and answers
     themeOrder.forEach(themeKey => {
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
@@ -45,33 +47,35 @@ const SHEET_HEADERS = generateSheetHeaders();
 
 function prepareDataForSheetExport(entry: DailyEntry | null): (string | number | null)[][] {
     if (!entry || !entry.scores || !entry.detailedScores) return [];
-    
+
     const dateObj = parseISO(entry.date);
     const dayOfWeek = format(dateObj, 'EEEE', { locale: pl });
 
     const rowData: (string | number | null)[] = [entry.date, dayOfWeek];
-    
+
     let totalSum = 0;
     themeOrder.forEach(themeKey => {
         totalSum += entry.scores?.[themeKey] ?? 0;
     });
     rowData.push(parseFloat(totalSum.toFixed(2)));
 
+    // Add overall scores for each theme first
     themeOrder.forEach(themeKey => {
-        rowData.push(entry.scores?.[themeKey] ?? 0); 
+        rowData.push(entry.scores?.[themeKey] ?? 0);
     });
 
+    // Then add detailed question scores and answers
     themeOrder.forEach(themeKey => {
-        const questionsCount = getQuestionsForTheme(themeKey).length; 
+        const questionsCount = getQuestionsForTheme(themeKey).length;
         for (let qIndex = 0; qIndex < questionsCount; qIndex++) {
             const questionScoreValue = entry.detailedScores[themeKey]?.[qIndex];
-            const questionScore: QuestionScore | undefined = 
-                (questionScoreValue === -0.25 || questionScoreValue === 0 || questionScoreValue === 0.25) 
-                ? questionScoreValue 
+            const questionScore: QuestionScore | undefined =
+                (questionScoreValue === -0.25 || questionScoreValue === 0 || questionScoreValue === 0.25)
+                ? questionScoreValue
                 : undefined;
-            
-            rowData.push(questionScore ?? 0); 
-            rowData.push(getAnswerLabelForScore(themeKey, qIndex, questionScore)); 
+
+            rowData.push(questionScore ?? 0);
+            rowData.push(getAnswerLabelForScore(themeKey, qIndex, questionScore));
         }
     });
 
@@ -100,7 +104,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
 
   const handleAnalyzeData = async (promptToUse?: string) => {
     if (!isClient) return;
-    
+
     setIsAnalyzing(true);
     setError(null);
     setAnalysisResult(null);
@@ -108,8 +112,8 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
 
     try {
       toast({ title: "Rozpoczynam analizę danych z Arkusza Google przez AI...", description: "To może chwilę potrwać." });
-      const result = await analyzeSheetData(promptToUse); 
-      
+      const result = await analyzeSheetData(promptToUse);
+
       if (result.success) {
         setAnalysisResult(result);
         if(result.message) {
@@ -133,7 +137,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
 
   const handleExportData = async () => {
       if (!isClient) return;
-      
+
       setIsExporting(true);
       setError(null);
       setExportMessage(null);
@@ -183,7 +187,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
     setExportMessage(null);
     toast({ title: "Testowanie odczytu", description: "Próba odczytu z Google Sheet..." });
     try {
-        const result = await testReadGoogleSheet(); 
+        const result = await testReadGoogleSheet();
         if (result.success) {
             const successMsg = `Test odczytu udany. Odczytano dane: ${JSON.stringify(result.data || "brak danych w zakresie")}.`;
             setExportMessage(successMsg);
@@ -242,7 +246,7 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
                 disabled={isAnalyzing || isExporting || isTestingSheetRead}
             />
             <Button onClick={() => handleAnalyzeData(customPrompt)} disabled={isAnalyzing || isExporting || isTestingSheetRead || !customPrompt.trim()} className="w-full sm:w-auto">
-              {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Edit3 className="mr-2 h-4 w-4" /> Analizuj z Własnym Promptem</>}
+              {isAnalyzing && customPrompt ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Edit3 className="mr-2 h-4 w-4" /> Odpowiedź AI</>}
             </Button>
         </div>
 
