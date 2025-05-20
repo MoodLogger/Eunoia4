@@ -9,7 +9,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
 import { Loader2, Lightbulb, UploadCloud, AlertCircle, CheckCircle, BarChart3, Edit3 } from 'lucide-react';
 import { analyzeSheetData } from '@/actions/analyze-sheet-data';
-import { exportToGoogleSheets, testReadGoogleSheet } from '@/actions/export-to-google-sheets';
+import { exportToGoogleSheets } from '@/actions/export-to-google-sheets';
 import type { DailyEntry, AISheetAnalysisResult, QuestionScore } from '@/lib/types';
 import { useToast } from '@/hooks/use-toast';
 import { themeOrder, themeLabels } from '@/components/theme-assessment';
@@ -24,16 +24,15 @@ interface MoodAnalysisProps {
 const generateSheetHeaders = (): string[] => {
     const headers: string[] = ['Date', 'Dzień Tygodnia', 'Suma Punktów'];
 
-    // Add overall scores for each theme first
     themeOrder.forEach(themeKey => {
         headers.push(`${themeLabels[themeKey]} - Wynik Ogólny`);
     });
 
-    // Then add detailed question scores and answers
     themeOrder.forEach(themeKey => {
         const questions = getQuestionsForTheme(themeKey);
         questions.forEach((questionText, qIndex) => {
-            const sanitizedQuestionText = questionText.substring(0, 100); // Preserve Polish characters, limit length
+            // Preserve Polish characters, limit length
+            const sanitizedQuestionText = questionText.substring(0, 100); 
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Wynik`);
             headers.push(`${themeLabels[themeKey]} - ${sanitizedQuestionText} - Odpowiedź`);
         });
@@ -59,12 +58,10 @@ function prepareDataForSheetExport(entry: DailyEntry | null): (string | number |
     });
     rowData.push(parseFloat(totalSum.toFixed(2)));
 
-    // Add overall scores for each theme first
     themeOrder.forEach(themeKey => {
         rowData.push(entry.scores?.[themeKey] ?? 0);
     });
 
-    // Then add detailed question scores and answers
     themeOrder.forEach(themeKey => {
         const questionsCount = getQuestionsForTheme(themeKey).length;
         for (let qIndex = 0; qIndex < questionsCount; qIndex++) {
@@ -94,7 +91,6 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
   const [error, setError] = React.useState<string | null>(null);
   const [isClient, setIsClient] = React.useState(false);
   const { toast } = useToast();
-  const [isTestingSheetRead, setIsTestingSheetRead] = React.useState(false);
   const [customPrompt, setCustomPrompt] = React.useState<string>('');
 
 
@@ -180,31 +176,6 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       }
   };
 
-  const handleTestSheetRead = async () => {
-    if (!isClient) return;
-    setIsTestingSheetRead(true);
-    setError(null);
-    setExportMessage(null);
-    toast({ title: "Testowanie odczytu", description: "Próba odczytu z Google Sheet..." });
-    try {
-        const result = await testReadGoogleSheet();
-        if (result.success) {
-            const successMsg = `Test odczytu udany. Odczytano dane: ${JSON.stringify(result.data || "brak danych w zakresie")}.`;
-            setExportMessage(successMsg);
-            toast({ title: "Test odczytu udany", description: successMsg, duration: 10000 });
-        } else {
-            throw new Error(result.error || "Nieznany błąd podczas testu odczytu.");
-        }
-    } catch (err) {
-        console.error("Error testing sheet read:", err);
-        const errorMessage = err instanceof Error ? err.message : "Test odczytu nie powiódł się.";
-        setError(errorMessage);
-        toast({ variant: "destructive", title: "Test odczytu nie powiódł się", description: errorMessage, duration: 10000 });
-    } finally {
-        setIsTestingSheetRead(false);
-    }
-};
-
 
   if (!isClient) {
     return (
@@ -228,10 +199,10 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
       </CardHeader>
       <CardContent className="space-y-4 p-6">
         <div className="flex flex-col sm:flex-row justify-center space-y-2 sm:space-y-0 sm:space-x-4">
-            <Button onClick={() => handleAnalyzeData()} disabled={isAnalyzing || isExporting || isTestingSheetRead}>
+            <Button onClick={() => handleAnalyzeData()} disabled={isAnalyzing || isExporting}>
               {isAnalyzing ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Lightbulb className="mr-2 h-4 w-4" /> Analizuj</>}
             </Button>
-             <Button onClick={handleExportData} disabled={isAnalyzing || isExporting || isTestingSheetRead || !currentEntry} variant="outline">
+             <Button onClick={handleExportData} disabled={isAnalyzing || isExporting || !currentEntry} variant="outline">
               {isExporting ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Exportuję...</> : <><UploadCloud className="mr-2 h-4 w-4" /> Export do Arkuszy</>}
             </Button>
         </div>
@@ -243,20 +214,14 @@ export function MoodAnalysis({ currentEntry }: MoodAnalysisProps) {
                 value={customPrompt}
                 onChange={(e) => setCustomPrompt(e.target.value)}
                 className="min-h-[80px]"
-                disabled={isAnalyzing || isExporting || isTestingSheetRead}
+                disabled={isAnalyzing || isExporting}
             />
-            <Button onClick={() => handleAnalyzeData(customPrompt)} disabled={isAnalyzing || isExporting || isTestingSheetRead || !customPrompt.trim()} className="w-full sm:w-auto">
+            <Button onClick={() => handleAnalyzeData(customPrompt)} disabled={isAnalyzing || isExporting || !customPrompt.trim()} className="w-full sm:w-auto">
               {isAnalyzing && customPrompt ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Analizuję...</> : <><Edit3 className="mr-2 h-4 w-4" /> Odpowiedź AI</>}
             </Button>
         </div>
 
-         <div className="flex justify-center pt-2">
-            <Button onClick={handleTestSheetRead} disabled={isAnalyzing || isExporting || isTestingSheetRead} variant="secondary" size="sm">
-                {isTestingSheetRead ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" /> Testuję...</> : "Testuj Odczyt Arkusza"}
-            </Button>
-        </div>
-
-        {error && !isAnalyzing && !isExporting && !isTestingSheetRead && (
+        {error && !isAnalyzing && !isExporting && (
             <Alert variant="destructive" className="mt-4">
                  <AlertCircle className="h-4 w-4" />
                 <AlertTitle>Wystąpił błąd</AlertTitle>
